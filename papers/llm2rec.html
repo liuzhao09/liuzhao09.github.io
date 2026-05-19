@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>LLM2Rec 解读 | liuzhao09</title>
+    <meta name="description" content="探索如何让 LLM 同时捕获协同过滤信号和文本语义，成为推荐系统的 embedding model。">
+    <link rel="stylesheet" href="../assets/css/site.css">
+    <script>
+      window.MathJax = { tex: { inlineMath: [['$', '$'], ['\\(', '\\)']], displayMath: [['$$', '$$'], ['\\[', '\\]']] }, svg: { fontCache: 'global' } };
+    </script>
+    <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+  </head>
+  <body class="paper-page">
+    <header class="site-header paper">
+      <nav class="nav" aria-label="主导航">
+        <a class="brand" href="../index.html"><span class="brand-mark">LZ</span><span>liuzhao09</span></a>
+        <div class="nav-links">
+          <a href="../index.html">首页</a>
+          <a href="../papers.html">论文库</a>
+          <a href="https://arxiv.org/abs/2506.21579">论文原文</a>
+        </div>
+      </nav>
+    </header>
+
+    <main class="page-shell">
+      <section class="paper-hero note-hero">
+        <div>
+          <p class="breadcrumb"><a href="../papers.html">论文库</a> / LLM2Rec</p>
+          <h1 class="paper-title">LLM2Rec: LLMs Are Powerful Embedding Models for Sequential Recommendation</h1>
+          <p class="paper-dek">探索如何让 LLM 同时捕获协同过滤信号和文本语义，成为推荐系统的 embedding model。</p>
+          <div class="tag-row"><span class="tag">LLM Embedding</span><span class="tag">序列推荐</span><span class="tag">CSFT</span><span class="tag">对比学习</span></div>
+        </div>
+        <aside class="paper-meta" aria-label="论文信息">
+          <dl>
+            <div><dt>来源</dt><dd>KDD 2025 · 新加坡国立大学</dd></div>
+            <div><dt>原始笔记</dt><dd>LLM2Rec-新国立-KDD2025.md</dd></div>
+            <div><dt>正文策略</dt><dd>按 Markdown 原文转换，图片路径已站点化</dd></div>
+            <div><dt>原文链接</dt><dd><a href="https://arxiv.org/abs/2506.21579">打开论文</a></dd></div>
+          </dl>
+        </aside>
+      </section>
+
+      <div class="article-layout note-layout">
+        <nav class="toc" aria-label="文章目录">
+          <a class="toc-l1" href="#1-背景与问题">1. 背景与问题</a>
+          <a class="toc-l2" href="#任务">任务</a>
+          <a class="toc-l2" href="#背景动机">背景动机</a>
+          <a class="toc-l2" href="#llm2rec-两大步骤">LLM2Rec 两大步骤</a>
+          <a class="toc-l1" href="#2-方法">2. 方法</a>
+          <a class="toc-l2" href="#21-collaborative-supervised-fine-tuningcsft">2.1 Collaborative Supervised Fine-tuning（CSFT）</a>
+          <a class="toc-l2" href="#22-item-level-embedding-modeling">2.2 Item-level Embedding Modeling</a>
+          <a class="toc-l3" href="#221-从单向注意力-→-双向注意力bidirectional-attention">2.2.1 从单向注意力 → 双向注意力（Bidirectional attention）</a>
+          <a class="toc-l3" href="#222-商品级别的对比学习item-level-contrastive-learning">2.2.2 商品级别的对比学习（Item-level Contrastive Learning）</a>
+          <a class="toc-l2" href="#23-喂给序列推荐模型">2.3 喂给序列推荐模型</a>
+          <a class="toc-l1" href="#3-实验">3. 实验</a>
+          <a class="toc-l2" href="#31-主实验">3.1 主实验</a>
+          <a class="toc-l2" href="#32-消融实验">3.2 消融实验</a>
+          <a class="toc-l2" href="#33-其他">3.3 其他</a>
+          <a class="toc-l3" href="#331-域分析">3.3.1 域分析</a>
+          <a class="toc-l3" href="#332-llm-backbones-分析">3.3.2 LLM Backbones 分析</a>
+          <a class="toc-l3" href="#333-性能分析">3.3.3 性能分析</a>
+          <a class="toc-l1" href="#4-总结">4. 总结</a>
+        </nav>
+        <article class="article markdown-body">
+          <p>这里来学习一篇文章《LLM2Rec: Large Language Models Are Powerful Embedding Models for Sequential Recommendation》是新国立 蔡达成（Tat-Seng Chua）团队在 KDD-2025 上的工作。</p>
+<p>论文链接：<a href="https://arxiv.org/abs/2506.21579">https://arxiv.org/abs/2506.21579</a></p>
+<p>代码链接：<a href="https://github.com/HappyPointer/LLM2Rec">https://github.com/HappyPointer/LLM2Rec</a></p>
+<h1 id="1-背景与问题">1. 背景与问题</h1>
+
+
+
+<h2 id="任务">任务</h2>
+
+<p>整体任务也是<mark>协同与语义的结合</mark>。</p>
+<p>现有探索有两种：</p>
+<ul>
+<li>一种是<strong>纯文本法</strong>：只用文本（商品介绍等）做 embedding，能泛化但丢了 CF 信号。</li>
+<li>另一种是<strong>混合法</strong>：试图融合文本和 CF 信号，比如把 ID 向量和文本向量拼接、用文本指导 ID 训练、或设计融合网络（比如cross-attention）。【CCFRec 也算这类吧】本质还是主要依赖 ID 向量。</li>
+</ul>
+<p>作者认为：<mark>最好的 embedding model，应该 “天生” 就能同时捕获 CF 信号和 语义知识</mark>，而不是通过外部拼拼凑凑【OneRec 中的 embedding 方式】本文旨在探索如何让 LLM 既理解文本，又成为可以泛化的 embedding 生成器，服务于推荐系统。</p>
+<h2 id="背景动机">背景动机</h2>
+
+<ul>
+<li>近几年发现大语言模型（LLM）经过“监督微调”后，其实可以学会推荐相关任务。</li>
+<li>作者想让LLM既能捕捉CF信号（比如哪些商品经常一起被买），又有理解文本内容的能力。</li>
+<li>但是LLM原本只会做“token级别预测”（即只会预测下一个词），并不是专门为生成商品的“整体<strong>向量</strong>”设计的。</li>
+</ul>
+<p><img src="../assets/images/llm2rec/1.jpg" alt="1"></p>
+<h2 id="llm2rec-两大步骤">LLM2Rec 两大步骤</h2>
+
+
+
+<p><strong>协同监督微调（CSFT）</strong></p>
+<ul>
+<li>把真实推荐场景下的用户交互序列（比如：用户买了A、B、C，接下来可能买D）用来微调 LLM，让它能够学习到商品间的 <strong>CF 信号</strong>。</li>
+<li>实例：比如任天堂的一堆游戏（马里奥、动物森友会等），这些游戏经常被同一批用户一起买，经过训练后，这些游戏的向量会变得更接近。</li>
+</ul>
+<p><strong>商品级嵌入建模（IEM）</strong></p>
+<ul>
+<li>在前面基础上，对 LLM 做进一步的结构和目标优化，让它更适合生成“商品级的<strong>向量</strong>”。</li>
+<li>主要包括两个技术：<ul>
+<li><strong>双向注意力+掩码预测（MNTP）</strong>：让模型可以更全面地理解每个商品的文本信息。</li>
+<li><strong>商品级对比学习</strong>：让同一个商品的不同“视角”聚在一起，不同商品拉得更远，这样嵌入更加区分度高。</li>
+</ul>
+</li>
+</ul>
+<h1 id="2-方法">2. 方法</h1>
+
+<p><img src="../assets/images/llm2rec/2.jpg" alt="2"></p>
+<h2 id="21-collaborative-supervised-fine-tuningcsft">2.1 Collaborative Supervised Fine-tuning（CSFT）</h2>
+
+<p>输入其实就是一串商品标题的列表，之间只用逗号隔开，没有复杂的模板，以防止模型学到无关的模板信息。</p>
+<p>每次只让模型根据前面的商品序列“自回归地”生成下一个商品标题：</p>
+<p><img src="../assets/images/llm2rec/3.jpg" alt="3"></p>
+<h2 id="22-item-level-embedding-modeling">2.2 Item-level Embedding Modeling</h2>
+
+<p>大语言模型（LLM，比如GPT）通常都是<strong>单向的 decoder 模型</strong>，它们被设计用于“自回归”（即一个词一个词地预测下一个词）。</p>
+<p>但是，这种单向预测机制在生成高质量的<strong>item embedding</strong>时表现一般。因为生成 embedding 通常需要<strong>双向地同时看前面和后面的上下文信息</strong>。</p>
+<p>作者希望能够综合两种模型的优点：</p>
+<ul>
+<li>单向decoder（LLM）：拥有强大的语义理解能力。</li>
+<li>双向encoder模型（如BERT）：更适合生成高质量的上下文感知嵌入。</li>
+</ul>
+<p>因此，作者试图对LLM进行改造，使它同时拥有 <strong>encoder 的双向理解能力</strong>，来生成高质量的商品嵌入。</p>
+<p><img src="../assets/images/llm2rec/4.jpg" alt="4"></p>
+<h3 id="221-从单向注意力-→-双向注意力bidirectional-attention">2.2.1 从单向注意力 → 双向注意力（Bidirectional attention）</h3>
+
+<p><strong>单向注意力（Causal Attention）：</strong></p>
+<ul>
+<li>传统的decoder LLM在生成一个词的嵌入时，只能看到它前面的词，无法看到后面的词，这叫做“因果注意力（Causal attention）”。</li>
+</ul>
+<p><strong>为什么要转为双向注意力？</strong></p>
+<ul>
+<li>在生成嵌入时，我们希望模型能看到整个商品描述的全部内容（即：商品标题或描述中的所有词）。</li>
+<li>因此，作者去掉了单向的限制，改造成“<strong>双向注意力</strong>”：生成一个词的嵌入时，可以同时参考它前后所有词的信息。</li>
+</ul>
+<p><strong>怎么训练这种双向的LLM？（Masked Next Token Prediction，简称MNTP）</strong></p>
+<ul>
+<li>在商品的文本序列中，随机遮盖掉一些词（随机mask），然后让LLM根据前后词的信息预测出这些被mask的词。</li>
+<li>这样LLM逐渐就能习惯于双向地理解商品的文本，从而生成更有效的嵌入。</li>
+<li>MNTP的损失函数：</li>
+</ul>
+<p>$$
+\mathcal{L}<em>{MNTP}=-\sum</em>{i\in I}\sum_{s=0}^{\ell_i}p(t_{i,s}|t_{i,&lt;s})
+$$</p>
+<h3 id="222-商品级别的对比学习item-level-contrastive-learning">2.2.2 商品级别的对比学习（Item-level Contrastive Learning）</h3>
+
+<p><strong>为什么需要对比学习？</strong></p>
+<ul>
+<li>上一步的方法（MNTP）还是以词（token）为单位，而作者希望获得的是商品级（整个句子或描述）的整体嵌入。</li>
+<li>单纯把词级嵌入平均（average-pooling）是一种简单方法，但不一定足够好。</li>
+</ul>
+<p><strong>对比学习怎么做？</strong></p>
+<ul>
+<li>每个商品文本会随机生成两个略有差异的版本（比如随机遮盖不同的词），让模型去分别生成两个版本的商品嵌入。</li>
+<li>模型的目标：<ul>
+<li>同一个商品的两个版本嵌入<strong>尽可能接近</strong>；</li>
+<li>不同商品的嵌入<strong>尽可能远离</strong>。</li>
+</ul>
+</li>
+<li>这样生成的嵌入就更容易区分不同的商品，也能更好地表示商品本身。</li>
+<li>对比学习的损失函数：</li>
+</ul>
+<p>$$
+\mathcal{L}<em>{IC}=-\sum</em>{i\in I}\log\frac{\exp\left(\mathcal{E}(\tilde{t}_i^1)\mathcal{E}(\tilde{t}<em>i^2)^\top/\tau\right)}{\sum</em>{j\in I}\exp\left(\mathcal{E}(\tilde{t}_j^1)\mathcal{E}(\tilde{t}_j^2)^\top/\tau\right)}
+$$</p>
+<p><mark>我疑惑这里没有用 logit shift 仅仅通过这个阶段的训练改变的目标是不是太大了？</mark>原本 自回归的 causal mask 模型的 hidden state 本质上更关注下一个位置的 token 预测。每个位置输出的 hidden state 与下一个 token 紧密相关，而非自己当前 token 本身。<strong>BERT是在预测当前位置token，而不是下一个位置token</strong>。</p>
+<h2 id="23-喂给序列推荐模型">2.3 喂给序列推荐模型</h2>
+
+<p>把 LLM2Rec 生成的每个 item 的 embedding $z_i$，用一个简单的线性变换（就是加个“门槛”，w乘上再加b，公式：$z&#39;_i = Wz_i + b$）。</p>
+<p>这个线性层参数（W和b）可以在下游推荐系统训练时一起优化，适配到下游的场景。</p>
+<h1 id="3-实验">3. 实验</h1>
+
+
+
+<h2 id="31-主实验">3.1 主实验</h2>
+
+<p><img src="../assets/images/llm2rec/5.jpg" alt="5"></p>
+<h2 id="32-消融实验">3.2 消融实验</h2>
+
+<p><img src="../assets/images/llm2rec/6.jpg" alt="6"></p>
+<h2 id="33-其他">3.3 其他</h2>
+
+<h3 id="331-域分析">3.3.1 域分析</h3>
+
+<p><img src="../assets/images/llm2rec/7.jpg" alt="7"></p>
+<h3 id="332-llm-backbones-分析">3.3.2 LLM Backbones 分析</h3>
+
+<p><img src="../assets/images/llm2rec/8.jpg" alt="8"></p>
+<h3 id="333-性能分析">3.3.3 性能分析</h3>
+
+<p><img src="../assets/images/llm2rec/9.jpg" alt="9"></p>
+<h1 id="4-总结">4. 总结</h1>
+
+<p>感觉直接从 next-token-prediction 转变为 mask-token-prediction 的地方，是不是可能导致模型变化很大，因为也在看 Diffusion LLM 的文章，他们一般在基于自回归 next-token-prediction 上预训练，然后使用 mask-token-prediciton 的时候由于当前位置预测的任务变了，所有做了一个 logit shift ，这样输出的 hidden state 不会有太大变化，能够继续训练，这里却不是。是否是因为没这样做才导致 IEM1(MNTP) 在消融实验里提升很小。</p>
+
+        </article>
+        <aside class="side-notes" aria-label="侧边摘要">
+          <div class="note-block">
+            <strong>阅读说明</strong>
+            <p>正文尽量保持原始 Markdown 笔记，只做标题锚点、图片路径和数学公式展示适配。</p>
+          </div>
+          <div class="note-block side-links">
+            <strong>章节跳转</strong>
+            <a href="#1-背景与问题">1. 背景与问题</a><a href="#2-方法">2. 方法</a><a href="#3-实验">3. 实验</a><a href="#4-总结">4. 总结</a>
+          </div>
+          <div class="note-block">
+            <strong>相关入口</strong>
+            <p><a href="../papers.html">返回论文库</a></p>
+          </div>
+        </aside>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="page-shell">
+        <span>© 2026 liuzhao09. Paper note.</span>
+        <a class="text-link" href="../papers.html">返回论文库</a>
+      </div>
+    </footer>
+  </body>
+</html>
