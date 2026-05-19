@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>DashAttention 解读 | liuzhao09</title>
+    <meta name="description" content="用 alpha-entmax 做可微 block routing，让长上下文稀疏注意力从固定 top-k 变成自适应选择。">
+    <link rel="stylesheet" href="../assets/css/site.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="nav" aria-label="主导航">
+        <a class="brand" href="../index.html"><span class="brand-mark">LZ</span><span>liuzhao09</span></a>
+        <div class="nav-links">
+          <a href="../index.html">首页</a>
+          <a href="../papers.html">论文库</a>
+          <a href="https://arxiv.org/pdf/2605.18753">论文原文</a>
+        </div>
+      </nav>
+    </header>
+
+    <main class="page-shell paper-shell">
+      <section class="paper-hero">
+        <div>
+          <p class="breadcrumb"><a href="../papers.html">论文库</a> / DashAttention</p>
+          <h1 class="paper-title">DashAttention: Differentiable and Adaptive Sparse Hierarchical Attention</h1>
+          <p class="paper-subtitle">用 alpha-entmax 做可微 block routing，让长上下文稀疏注意力从固定 top-k 变成自适应选择。</p>
+          <div class="tag-row"><span class="tag">长上下文</span><span class="tag">Sparse Attention</span><span class="tag">LLM Inference</span><span class="tag">Triton</span></div>
+        </div>
+        <aside class="paper-meta" aria-label="论文信息">
+          <dl>
+            <div><dt>来源</dt><dd>arXiv 2026 · Tsinghua + CMU + Lisbon</dd></div>
+            <div><dt>公开日期</dt><dd>2026-05-18</dd></div>
+            <div><dt>arXiv</dt><dd><a href="https://arxiv.org/abs/2605.18753">2605.18753</a></dd></div>
+            <div><dt>原文</dt><dd><a href="https://arxiv.org/pdf/2605.18753">打开 PDF</a></dd></div>
+          </dl>
+        </aside>
+      </section>
+
+      <div class="paper-layout">
+        <aside class="paper-toc" aria-label="目录">
+          <p>目录</p>
+          <a class="toc-l1" href="#一句话">1. 一句话</a>
+<a class="toc-l1" href="#研究问题">2. 研究问题</a>
+<a class="toc-l1" href="#核心方法">3. 核心方法</a>
+<a class="toc-l1" href="#图表解读">4. 图表解读</a>
+<a class="toc-l1" href="#实验结果">5. 实验结果</a>
+<a class="toc-l1" href="#启发与局限">6. 启发与局限</a>
+        </aside>
+        <article class="markdown-body paper-content">
+          <p>这里阅读一篇最近公开的论文《DashAttention: Differentiable and Adaptive Sparse Hierarchical Attention》。中文可以叫《可微且自适应的稀疏层级注意力》。</p>
+<p>论文链接：<a href="https://arxiv.org/abs/2605.18753">https://arxiv.org/abs/2605.18753</a>
+PDF：<a href="https://arxiv.org/pdf/2605.18753">https://arxiv.org/pdf/2605.18753</a>
+代码/项目页：未核验
+公开日期：2026-05-18，来源：arXiv cs.CL/cs.AI/cs.LG，arXiv ID：2605.18753。</p>
+<h1 id="一句话">1. 一句话</h1>
+<p>DashAttention 是一篇长上下文 LLM 注意力效率论文。现有层级稀疏注意力通常先用 coarse score 选 top-k KV blocks，再在选中 token 上做细粒度 softmax。问题是 top-k 固定了每个 query 可看的块数，而且选择过程不可微。DashAttention 用 alpha-entmax 替代硬 top-k，让每个 query/head 自适应选择可变数量的 blocks，并把第一阶段的稀疏 routing 作为第二阶段 softmax 的 prior，使整套层级注意力端到端可微。</p>
+<h1 id="研究问题">2. 研究问题</h1>
+<p>长上下文任务的难点不是所有 token 都重要，而是重要信息数量、位置和相似度会随 query 变化。固定窗口、固定 top-k 或手工稀疏 pattern 都会遇到两类问题：一是有些 query 只需要少量上下文，有些 query 需要更多证据，固定 k 既浪费又可能漏召回；二是 top-k 阻断梯度，模型无法在训练中学习粗粒度 routing 和细粒度 attention 的协同。DashAttention 想证明稀疏注意力可以同时做到自适应、可微、非发散，并且有可落地的 Triton 实现。</p>
+<h1 id="核心方法">3. 核心方法</h1>
+<p>方法分三阶段。Stage 0 对 KV cache 按 chunk 做局部 SDPA，生成 chunk summaries。Stage 1 用 query 和 chunk summary 计算 coarse routing score，再通过 alpha-entmax 得到稀疏概率分布；和 softmax 不同，entmax 可以输出真正的零，因此天然形成稀疏 support，而且 support size 由 query 自适应决定。Stage 2 在被 routing 支持的 token 上做 prior-induced sparse softmax，把 Stage 1 的块级概率注入 token 级 attention。论文还给出 non-dispersive 分析，说明这种注意力不会像某些层级稀疏方案那样把概率扩散到不相关块。</p>
+<h1 id="图表解读">4. 图表解读</h1>
+<p><img alt="1" src="../assets/images/dashattention/1.jpg" /></p>
+<p>图 1 是 DashAttention 的三阶段流程：chunk summary、entmax block routing、带 prior 的 token-level sparse softmax。</p>
+<p><img alt="2" src="../assets/images/dashattention/2.jpg" /></p>
+<p>表 1 是 RULER 16K 结果，比较 FullAttn、NSA、InfLLMv2 和 DashAttention 在不同模型规模下的长上下文能力。</p>
+<p><img alt="3" src="../assets/images/dashattention/3.jpg" /></p>
+<p>表 2 是 HELMET 16K 结果，覆盖 recall、ICL、rerank、RAG、LongQA、citation、summarization 等任务。</p>
+<p><img alt="4" src="../assets/images/dashattention/4.jpg" /></p>
+<p>表 5 是相对 FlashAttention full attention 的 wall-clock speedup，在 prefill 和 decoding、不同稀疏度下比较。</p>
+<p><img alt="5" src="../assets/images/dashattention/5.jpg" /></p>
+<p>图 2 给出 accuracy-sparsity Pareto frontier，展示 DashAttention 在高稀疏区间的优势。</p>
+<h1 id="实验结果">5. 实验结果</h1>
+<p>摘要和表格给出的核心结论是：在 75% sparsity 下，DashAttention 可以达到接近 full attention 的准确率，并且相较 NSA、InfLLMv2 有更好的 Pareto frontier，尤其在高稀疏场景。RULER 和 HELMET 说明它不只在单一 needle 检索上有效，也覆盖 RAG、rerank、long QA 等长上下文任务。效率部分提供 GPU-aware Triton 实现，推理相对 FlashAttention-3 最高有 3.3 倍速度提升。论文还报告通用任务性能，说明稀疏化没有明显破坏普通语言能力。</p>
+<h1 id="启发与局限">6. 启发与局限</h1>
+<p>对大模型工程，DashAttention 的启发是稀疏 pattern 不应该完全手工设定，应该让模型根据 query 决定需要多少上下文。对推荐/RAG 系统，它可用于长用户历史、长会话、多文档检索后的上下文压缩：不是先粗暴截断，再让 LLM 苦读，而是在注意力层自适应跳过无关块。局限包括：alpha-entmax 的超参、训练稳定性和硬件实现细节会影响收益；Triton kernel 集成到主流推理框架仍有工程成本；极端高稀疏度或多跳推理中是否漏掉弱相关证据，需要更细粒度分析；训练时可微稀疏和推理时高性能 sparse kernel 之间可能存在实现差异。后续值得跟进开源实现、vLLM/FlashAttention 生态适配，以及在推荐超长行为序列中的效果。</p>
+        </article>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="page-shell">
+        <span>© 2026 liuzhao09. Paper notes.</span>
+        <a class="text-link" href="../papers.html">返回论文库</a>
+      </div>
+    </footer>
+  </body>
+</html>
