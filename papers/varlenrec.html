@@ -1,0 +1,546 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>VarLenRec 解读 | liuzhao09</title>
+    <meta name="description" content="VarLenRec 让生成式推荐中的语义 ID 长度按商品流行度和语义复杂度自适应分配。">
+    <link rel="stylesheet" href="../assets/css/site.css">
+    <script>
+      window.MathJax = { tex: { inlineMath: [['$', '$'], ['\\(', '\\)']], displayMath: [['$$', '$$'], ['\\[', '\\]']] }, svg: { fontCache: 'global' } };
+    </script>
+    <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+  </head>
+  <body class="paper-page">
+    <header class="site-header paper">
+      <nav class="nav" aria-label="主导航">
+        <a class="brand" href="../index.html"><span class="brand-mark">LZ</span><span>liuzhao09</span></a>
+        <div class="nav-links">
+          <a href="../index.html">首页</a>
+          <a href="../papers.html">论文库</a>
+          <a href="https://arxiv.org/pdf/2605.17779">论文原文</a>
+        </div>
+      </nav>
+    </header>
+
+    <main class="page-shell">
+      <section class="paper-hero note-hero">
+        <div>
+          <p class="breadcrumb"><a href="../papers.html">论文库</a> / VarLenRec</p>
+          <h1 class="paper-title">VarLenRec: Learning Variable-Length Tokenization for Generative Recommendation</h1>
+          <p class="paper-dek">让语义 ID 长度按商品流行度和语义复杂度自适应分配，缓解固定长度 ID 的头尾冲突。</p>
+          <div class="tag-row"><span class="tag">生成式推荐</span><span class="tag">Variable-Length Tokenization</span><span class="tag">Semantic ID</span><span class="tag">长尾推荐</span></div>
+        </div>
+        <aside class="paper-meta" aria-label="论文信息">
+          <dl>
+            <div><dt>来源</dt><dd>arXiv 2026 · 华东师范大学</dd></div>
+            <div><dt>原始笔记</dt><dd>华东师范-VarLenRec.md</dd></div>
+            <div><dt>正文策略</dt><dd>按 Markdown 原文转换，图片路径已站点化</dd></div>
+            <div><dt>原文链接</dt><dd><a href="https://arxiv.org/pdf/2605.17779">打开论文</a></dd></div>
+          </dl>
+        </aside>
+      </section>
+
+      <div class="article-layout note-layout">
+        <nav class="toc" aria-label="文章目录">
+          <a class="toc-l1" href="#1-一句话概括">1. 一句话概括</a>
+          <a class="toc-l1" href="#2-背景生成式推荐为什么需要语义-id">2. 背景：生成式推荐为什么需要语义 ID</a>
+          <a class="toc-l1" href="#3-核心发现popularity-length-paradox">3. 核心发现：Popularity-Length Paradox</a>
+          <a class="toc-l1" href="#4-方法总览varlenrec-做了什么">4. 方法总览：VarLenRec 做了什么</a>
+          <a class="toc-l1" href="#5-piba从信息预算推导热门短冷门长">5. PIBA：从信息预算推导“热门短、冷门长”</a>
+          <a class="toc-l2" href="#51-协同信息热门商品自带更多信息">5.1 协同信息：热门商品自带更多信息</a>
+          <a class="toc-l2" href="#52-语义-id-信息长度越长信息越多但边际递减">5.2 语义 ID 信息：长度越长，信息越多，但边际递减</a>
+          <a class="toc-l2" href="#53-信息缺口与最优长度">5.3 信息缺口与最优长度</a>
+          <a class="toc-l2" href="#54-实际如何把连续长度变成整数">5.4 实际如何把连续长度变成整数</a>
+          <a class="toc-l1" href="#6-harq为什么要用双曲空间做残差量化">6. HARQ：为什么要用双曲空间做残差量化</a>
+          <a class="toc-l2" href="#61-欧氏空间的问题">6.1 欧氏空间的问题</a>
+          <a class="toc-l2" href="#62-双曲空间的优势">6.2 双曲空间的优势</a>
+          <a class="toc-l2" href="#63-harq-的编码流程">6.3 HARQ 的编码流程</a>
+          <a class="toc-l1" href="#7-soft-length-controller让长度选择可以训练">7. Soft Length Controller：让长度选择可以训练</a>
+          <a class="toc-l2" href="#71-为什么要用累计-mask">7.1 为什么要用累计 mask</a>
+          <a class="toc-l2" href="#72-soft-controller-和-piba-的关系">7.2 Soft Controller 和 PIBA 的关系</a>
+          <a class="toc-l1" href="#8-训练目标表达能力和长度成本之间的权衡">8. 训练目标：表达能力和长度成本之间的权衡</a>
+          <a class="toc-l2" href="#81-重构损失">8.1 重构损失</a>
+          <a class="toc-l2" href="#82-量化损失">8.2 量化损失</a>
+          <a class="toc-l2" href="#83-长度成本">8.3 长度成本</a>
+          <a class="toc-l2" href="#84-长度对齐损失">8.4 长度对齐损失</a>
+          <a class="toc-l1" href="#9-下游生成阶段变长-id-带来的三个新问题">9. 下游生成阶段：变长 ID 带来的三个新问题</a>
+          <a class="toc-l2" href="#91-问题一id-碰撞">9.1 问题一：ID 碰撞</a>
+          <a class="toc-l2" href="#92-问题二幻觉生成">9.2 问题二：幻觉生成</a>
+          <a class="toc-l2" href="#93-问题三长度偏置">9.3 问题三：长度偏置</a>
+          <a class="toc-l1" href="#10-实验设置与整体结果">10. 实验设置与整体结果</a>
+          <a class="toc-l1" href="#11-消融实验每个组件是否真的有用">11. 消融实验：每个组件是否真的有用</a>
+          <a class="toc-l2" href="#111-固定长度都不如自适应长度">11.1 固定长度都不如自适应长度</a>
+          <a class="toc-l2" href="#112-去掉长度成本会变差">11.2 去掉长度成本会变差</a>
+          <a class="toc-l2" href="#113-只用-piba-直接分配长度也不够">11.3 只用 PIBA 直接分配长度也不够</a>
+          <a class="toc-l2" href="#114-把双曲空间换成欧氏空间会明显下降">11.4 把双曲空间换成欧氏空间会明显下降</a>
+          <a class="toc-l2" href="#115-去掉推理集成策略也会变差">11.5 去掉推理集成策略也会变差</a>
+          <a class="toc-l1" href="#12-效率分析为什么变长-id-反而更快">12. 效率分析：为什么变长 ID 反而更快</a>
+          <a class="toc-l1" href="#13-语义-id-质量分析">13. 语义 ID 质量分析</a>
+          <a class="toc-l2" href="#131-碰撞率降低">13.1 碰撞率降低</a>
+          <a class="toc-l2" href="#132-不同数据集学到不同平均长度">13.2 不同数据集学到不同平均长度</a>
+          <a class="toc-l2" href="#133-解决流行度-长度悖论">13.3 解决流行度-长度悖论</a>
+          <a class="toc-l1" href="#14-核心创新点总结">14. 核心创新点总结</a>
+          <a class="toc-l2" href="#141-发现-popularity-length-paradox">14.1 发现 Popularity-Length Paradox</a>
+          <a class="toc-l2" href="#142-提出-piba-理论框架">14.2 提出 PIBA 理论框架</a>
+          <a class="toc-l2" href="#143-用双曲空间承载变长残差量化">14.3 用双曲空间承载变长残差量化</a>
+          <a class="toc-l2" href="#144-用-soft-length-controller-实现可微长度学习">14.4 用 Soft Length Controller 实现可微长度学习</a>
+          <a class="toc-l2" href="#145-完整处理变长-id-的生成问题">14.5 完整处理变长 ID 的生成问题</a>
+          <a class="toc-l1" href="#15-和-tiger-etegrec-letter-的关系">15. 和 TIGER / ETEGRec / LETTER 的关系</a>
+          <a class="toc-l1" href="#16-最通俗的类比">16. 最通俗的类比</a>
+          <a class="toc-l1" href="#17-我的理解这篇文章真正重要的地方">17. 我的理解：这篇文章真正重要的地方</a>
+        </nav>
+        <article class="article markdown-body">
+<p>今天来精读华东师范大学这篇生成式推荐论文：《Learning Variable-Length Tokenization for Generative Recommendation》。这篇文章提出的核心问题非常直接：<strong>生成式推荐中的语义 ID 为什么一定要给所有物品固定长度？</strong></p>
+<p>论文地址：<a href="https://arxiv.org/pdf/2605.17779">https://arxiv.org/pdf/2605.17779</a></p>
+<h1 id="1-一句话概括">1. 一句话概括</h1>
+<p>这篇论文的核心观点是：<strong>生成式推荐系统不应该给所有商品分配同样长度的语义 ID；热门商品用短 ID 就够了，长尾商品反而需要更长、更细的 ID。</strong></p>
+<p>作者提出 <strong>VarLenRec</strong>，让系统根据商品流行度和商品语义复杂度自动学习“这个商品应该保留几层 token”。可以把它理解成：以前所有商品都拿同样长度的“身份证”；这篇文章认为，热门商品用户行为多、协同信号足，身份证可以短一点；冷门商品交互少、容易被混淆，身份证应该写得更详细。</p>
+<p>这篇文章真正重要的地方，不只是把 fixed-length 改成 variable-length，而是指出：<strong>语义 ID 的长度本质上是一种信息容量分配。</strong> 固定长度等价于假设所有物品需要相同的信息容量，但推荐系统中天然存在头部和长尾，二者的信息来源完全不同。</p>
+<h1 id="2-背景生成式推荐为什么需要语义-id">2. 背景：生成式推荐为什么需要语义 ID</h1>
+<p>传统推荐系统通常是“打分排序”：给用户和物品各自一个向量，然后计算用户对每个候选物品的偏好分数，最后排序。这个范式依赖召回、粗排、精排等多阶段链路，核心是匹配和排序。</p>
+<p>生成式推荐换了一种思路：<strong>把推荐看成一个生成任务。</strong> 模型看到用户过去点击、购买或浏览过的物品序列，然后像语言模型预测下一个词一样，预测用户下一个可能交互的物品。论文中也明确说，生成式推荐把推荐问题重构为对离散语义标识符，也就是 semantic IDs，做 next-token prediction。</p>
+<p>这里的“语义 ID”不是数据库里的随机商品编号。普通商品编号可能是 <code>item_12345</code>，这个编号本身没有语义；语义 ID 则是把商品文本、类别、协同关系等信息编码成一串离散 token，例如：</p>
+<div class="math-display">$$
+[12, 83, 41, 7]
+$$</div>
+<p>这串 token 理想情况下能表达物品的多层语义结构。第一层可能表示大类，比如“美妆”；第二层表示子类，比如“口红”；第三层表示更细属性，比如“哑光”；第四层表示更细粒度的商品差异。</p>
+<p>现有生成式推荐方法，例如 TIGER、LC-Rec、ETEGRec、LETTER 等，大多使用这种语义 ID 机制。它们通常先用文本编码器或协同表示得到物品 embedding，再用 RQ-VAE 或类似量化方法把连续 embedding 离散化成多层 token，最后让 T5 或 Transformer 类模型生成目标物品 token。</p>
+<p>但这些方法有一个共同假设：<strong>所有商品都用固定长度 ID。</strong> 比如每个商品都用长度为 4、6、8 或 10 的 token 序列。论文指出，这个设计其实隐含了一个很强的假设：所有商品都需要相同的编码容量。</p>
+<p>这个假设在推荐系统中并不自然。推荐系统天然存在长尾分布：少数热门商品有大量交互记录，大量冷门商品交互非常稀疏。热门商品和冷门商品的信息来源不同：</p>
+<ul>
+<li>热门商品被很多用户点击、购买、收藏，协同信号非常丰富，模型即使只用较短 ID 也能识别它。</li>
+<li>长尾商品缺少交互数据，协同信号不可靠，模型更依赖内容、类别、文本描述等细粒度语义来区分它。</li>
+</ul>
+<p>所以这篇文章的问题可以重新表述为：<strong>既然商品的信息需求不同，为什么语义 ID 的长度要相同？</strong></p>
+<h1 id="3-核心发现popularity-length-paradox">3. 核心发现：Popularity-Length Paradox</h1>
+<p>这篇文章最重要的出发点是一个实验发现，作者称为 <strong>Popularity-Length Paradox</strong>，可以翻译成“流行度-长度悖论”。</p>
+<p>作者把测试样本按照目标商品的流行度分成三组：</p>
+<ul>
+<li><strong>Head Items</strong>：最热门的 20% 商品。</li>
+<li><strong>Body Items</strong>：中间 60% 商品。</li>
+<li><strong>Tail Items</strong>：最冷门的 20% 商品。</li>
+</ul>
+<p>然后他们分别测试不同语义 ID 长度，例如 <span class="math-inline">$L=4,6,8,10$</span>，观察推荐效果 NDCG@10 的变化。</p>
+<p><img src="../assets/images/varlenrec/1.jpg" alt="1"></p>
+<p>图 1 展示的现象非常清楚：</p>
+<ul>
+<li><strong>Head Items</strong>：热门商品在短 ID 下效果最好，ID 变长后效果反而下降。</li>
+<li><strong>Tail Items</strong>：冷门商品正好相反，ID 越长效果越好。</li>
+<li><strong>Body Items</strong>：中间商品通常在中等长度附近更好。</li>
+<li><strong>All Items</strong>：全局最优固定长度只是一个折中方案，并不是任何一个流行度分组的真正最优。</li>
+</ul>
+<p>这就是论文所谓的 Popularity-Length Paradox：<strong>同一个 ID 长度对不同流行度商品的影响方向是相反的。</strong></p>
+<p>直观解释如下。</p>
+<p>对于热门商品，例如爆款手机、热门品牌口红、热门餐厅，它们在训练集中出现频率高，用户行为模式丰富。即使语义 ID 很短，模型也能通过大量协同信号认出它们。ID 过长时，后面的 token 可能引入很多推荐无关的细节，反而增加噪声，并使生成模型更难稳定预测。</p>
+<p>对于冷门商品，例如小众户外配件、冷门书籍、低频商家，它们的交互记录少，协同信号不足。如果 ID 太短，这些商品会被压缩到很粗的语义桶里，容易和大量相似商品混淆。它们需要更长的 token 序列来表达细粒度内容差异。</p>
+<p>因此，这篇文章的核心判断是：<strong>ID 长度应该因商品而异，而不是作为一个全局超参数固定下来。</strong></p>
+<h1 id="4-方法总览varlenrec-做了什么">4. 方法总览：VarLenRec 做了什么</h1>
+<p>VarLenRec 的全称可以理解为 Variable-Length Recommendation，是一个用于生成式推荐的变长语义 ID 学习框架。它不是单独提出一个小技巧，而是把理论长度分配、几何空间量化、可微长度选择和下游生成约束串成了一套完整方案。</p>
+<p><img src="../assets/images/varlenrec/2.jpg" alt="2"></p>
+<p>从图 2 可以看到，VarLenRec 包含四个关键部分：</p>
+<ol>
+<li><p><strong>PIBA：Popularity-Weighted Information Budget Allocation</strong></p><p>从信息预算角度推导“商品越热门，最优 ID 越短；商品越冷门，最优 ID 越长”。PIBA 给出理论长度先验，不是简单拍脑袋设规则。</p></li>
+<li><p><strong>HARQ：Hyperbolic Adaptive Residual Quantization</strong></p><p>在双曲空间中做自适应残差量化，让不同长度的 ID 更自然地表达不同粒度的商品语义。热门商品靠近双曲空间中心，长尾商品靠近边界，利用边界附近更大的表示容量。</p></li>
+<li><p><strong>Soft Length Controller</strong></p><p>长度选择本身是离散决策，不可微。Soft Length Controller 用每一层的保留概率来近似“是否继续保留下一层 token”，从而让长度学习可以端到端训练。</p></li>
+<li><p><strong>下游生成式推荐集成</strong></p><p>变长 ID 会带来新的生成问题，包括 ID 碰撞、幻觉生成和长度偏置。作者分别用辅助码本、Trie 约束解码和长度归一化/odds-ratio 重打分来处理。</p></li>
+</ol>
+<p>这四个部分的关系是：PIBA 提供理论和监督信号，HARQ 提供适合层级语义的几何空间，Soft Length Controller 学习可微的长度选择，下游集成保证变长 ID 真的能被生成式推荐模型使用。</p>
+<h1 id="5-piba从信息预算推导热门短冷门长">5. PIBA：从信息预算推导“热门短、冷门长”</h1>
+<p>PIBA 的全称是 <strong>Popularity-Weighted Information Budget Allocation</strong>，可以理解为“基于流行度加权的信息预算分配”。</p>
+<p>它背后的思想其实很朴素：推荐系统要有效区分一个商品，需要足够的信息量。这个信息量可以来自两部分：</p>
+<ul>
+<li><strong>协同信息</strong>：用户交互行为提供的信息，商品越热门，协同信息越多。</li>
+<li><strong>语义 ID 信息</strong>：商品内容、类别、文本描述等通过 token 表达的信息。</li>
+</ul>
+<p>作者假设每个商品都需要一个最低信息预算 <span class="math-inline">$I_{req}$</span>，才能被推荐系统有效区分。热门商品已经拥有大量协同信息，所以语义 ID 只需要补充少量信息；冷门商品缺少协同信息，所以语义 ID 需要承担更多信息。</p>
+<h2 id="51-协同信息热门商品自带更多信息">5.1 协同信息：热门商品自带更多信息</h2>
+<p>论文将商品 <span class="math-inline">$i$</span> 的流行度记为 <span class="math-inline">$p_i$</span>，也就是训练集中归一化后的交互频率。协同信息被建模为：</p>
+<div class="math-display">$$
+I_{collab}(p_i)=\alpha \log(1+\theta p_i)
+$$</div>
+<p>这里 <span class="math-inline">$\alpha$</span> 表示协同信息随流行度增长的收益率，<span class="math-inline">$\theta$</span> 是缩放参数。使用对数形式的原因是：协同信息有边际收益递减。一个商品从 1 次交互变成 10 次交互，信息增量很大；但从 100 万次变成 100 万零 10 次，新增信息就很有限。</p>
+<p>所以热门商品拥有更高的 <span class="math-inline">$I_{collab}$</span>，它需要语义 ID 补充的信息缺口更小。</p>
+<h2 id="52-语义-id-信息长度越长信息越多但边际递减">5.2 语义 ID 信息：长度越长，信息越多，但边际递减</h2>
+<p>残差量化是多层结构，越靠前的层表达越粗粒度的信息，越靠后的层表达越细粒度的残差。论文假设第 <span class="math-inline">$l$</span> 层提供的信息大约是 <span class="math-inline">$\gamma/l$</span>，因此长度为 <span class="math-inline">$L_i$</span> 的语义 ID 总信息量为：</p>
+<div class="math-display">$$
+I_{semantic}(L_i)=\gamma \sum_{l=1}^{L_i}\frac{1}{l}
+=\gamma H_{L_i}\approx \gamma \ln L_i
+$$</div>
+<p>这也符合直觉：第一层 token 信息量最大，后续层是在不断补充残差，越往后边际收益越小。</p>
+<h2 id="53-信息缺口与最优长度">5.3 信息缺口与最优长度</h2>
+<p>如果一个商品需要总信息预算 <span class="math-inline">$I_{req}$</span>，协同信息已经提供了 <span class="math-inline">$I_{collab}(p_i)$</span>，那么语义 ID 需要填补的信息缺口就是：</p>
+<div class="math-display">$$
+G_i = I_{req} - \alpha \log(1+\theta p_i)
+$$</div>
+<p>要求语义 ID 至少填补这个缺口：</p>
+<div class="math-display">$$
+I_{semantic}(L_i)\geq G_i
+$$</div>
+<p>代入 <span class="math-inline">$\gamma \ln L_i$</span> 后，可以得到最优长度与流行度之间的关系：</p>
+<div class="math-display">$$
+L_i^* = C \cdot p_i^{-\alpha/\gamma}
+$$</div>
+<p>这就是论文的 Theorem 1。它表达的含义是：<strong>最优 ID 长度和商品流行度成负幂关系。</strong> 商品越热门，<span class="math-inline">$p_i$</span> 越大，最优长度 <span class="math-inline">$L_i^*$</span> 越短；商品越冷门，<span class="math-inline">$p_i$</span> 越小，最优长度越长。</p>
+<p>这个公式的意义不在于实际系统必须严格照公式计算，而在于给出了理论原则：<strong>长度分配不是经验规则，而是由协同信息与语义信息的互补关系决定。</strong></p>
+<h2 id="54-实际如何把连续长度变成整数">5.4 实际如何把连续长度变成整数</h2>
+<p>实际系统中 ID 长度必须是整数，而且通常有最大长度 <span class="math-inline">$K$</span>。论文采用基于流行度排名的离散映射。</p>
+<p>先按流行度从高到低排序，给每个商品一个排名 <span class="math-inline">$r_i$</span>，最热门商品 <span class="math-inline">$r_i=0$</span>，最冷门商品 <span class="math-inline">$r_i=N-1$</span>。然后定义冷度：</p>
+<div class="math-display">$$
+q_i=\frac{r_i}{N-1}
+$$</div>
+<p>再用温度参数 <span class="math-inline">$\beta$</span> 控制映射曲线：</p>
+<div class="math-display">$$
+L_i = clip\left(
+round\left(1+(K-1)\left(\frac{r_i}{N-1}\right)^\beta\right), 1, K
+\right)
+$$</div>
+<p>这个映射保证了一个关键单调性：</p>
+<div class="math-display">$$
+p_a &gt; p_b \Rightarrow L_a \leq L_b
+$$</div>
+<p>也就是说，更热门的商品不会比更冷门的商品拿到更长的 ID。之后 PIBA 生成的离散长度会转成一个二值 mask，作为 Soft Length Controller 的监督目标：</p>
+<div class="math-display">$$
+t_i^{(l)} = 1[l \leq \hat{L}(p_i)]
+$$</div>
+<p>如果 PIBA 认为某商品长度应该是 4，那么前 4 层 mask 为 1，后面层为 0。</p>
+<h1 id="6-harq为什么要用双曲空间做残差量化">6. HARQ：为什么要用双曲空间做残差量化</h1>
+<p>VarLenRec 的第二个关键组件是 <strong>HARQ：Hyperbolic Adaptive Residual Quantization</strong>，即双曲自适应残差量化。</p>
+<p>先回顾普通残差量化。给定一个连续物品向量，残差量化不是一次性找一个离散码字，而是多层逐步逼近：</p>
+<ol>
+<li>第一层先选择一个码字，表示最粗粒度语义。</li>
+<li>计算第一层没有表示好的残差。</li>
+<li>第二层继续量化残差，表示更细粒度信息。</li>
+<li>后续层不断补充更细的残差。</li>
+</ol>
+<p>这种方式非常适合构造多 token 语义 ID。比如一个商品可以被逐层表示成：</p>
+<div class="math-display">$$
+电子产品 \rightarrow 手机 \rightarrow 安卓手机 \rightarrow 小屏旗舰 \rightarrow 某品牌某型号
+$$</div>
+<p>问题是，现有方法大多在欧氏空间中做残差量化。论文认为这不够适合推荐商品语义，因为商品语义天然是层级结构：大类下面有小类，小类下面有属性，属性下面有具体商品。这种结构像树，越往下分支越多。</p>
+<h2 id="61-欧氏空间的问题">6.1 欧氏空间的问题</h2>
+<p>欧氏空间的体积增长是多项式级别：</p>
+<div class="math-display">$$
+V_{Eucl}(r)\propto r^d
+$$</div>
+<p>但是树形层级结构的叶子数量通常是指数增长。也就是说，如果商品语义像一棵树，那么越往细粒度层级走，需要的可区分区域会快速膨胀。欧氏空间的容量增长速度和这种结构并不匹配。</p>
+<p>这会导致两个问题：</p>
+<ul>
+<li>如果把大量细粒度长尾商品塞进欧氏空间，它们容易挤在一起，产生较大表示失真。</li>
+<li>如果为了容纳长尾商品把空间拉得很大，热门商品的粗粒度聚集又会变得不够紧凑。</li>
+</ul>
+<h2 id="62-双曲空间的优势">6.2 双曲空间的优势</h2>
+<p>双曲空间的关键性质是：<strong>越靠近边界，空间体积增长越快。</strong> 在 Poincare ball 模型中，体积随半径近似指数增长：</p>
+<div class="math-display">$$
+V_{Hyp}(r)\propto \sinh^{d-1}(\sqrt{c}r)
+\approx e^{(d-1)\sqrt{c}r}
+$$</div>
+<p>这非常适合表达层级结构。通俗地说，双曲空间像一个“中心紧凑、边界巨大”的空间：</p>
+<ul>
+<li>靠近中心的区域容量较紧凑，适合放热门商品，因为热门商品只需要粗粒度区分。</li>
+<li>靠近边界的区域容量迅速扩大，适合放长尾商品，因为冷门商品需要更细粒度、更分散的表示。</li>
+</ul>
+<p>论文中说，HARQ 的编码器会学习把热门商品放在靠近原点的紧凑区域，把长尾商品分布到更靠近边界、容量更大的区域。这样就和 PIBA 的原则天然一致：热门商品短编码，长尾商品长编码。</p>
+<h2 id="63-harq-的编码流程">6.3 HARQ 的编码流程</h2>
+<p>HARQ 的输入是物品语义 embedding <span class="math-inline">$x_i$</span>。首先通过一个 MLP 编码器得到欧氏向量：</p>
+<div class="math-display">$$
+h_i = MLP_{enc}(x_i)
+$$</div>
+<p>然后通过指数映射投影到 Poincare ball：</p>
+<div class="math-display">$$
+z_i^{(0)} = exp_0^c(h_i)
+$$</div>
+<p>接着进行 <span class="math-inline">$K$</span> 层双曲残差量化。每一层维护一个双曲码本：</p>
+<div class="math-display">$$
+E^{(l)}=\{e_1^{(l)},...,e_M^{(l)}\}
+$$</div>
+<p>第 <span class="math-inline">$l$</span> 层选择离当前残差最近的码字：</p>
+<div class="math-display">$$
+z_i^{(l)} = \arg\min_j d_D(r_i^{(l-1)}, e_j^{(l)})
+$$</div>
+<p>然后用 Mobius 加法计算双曲残差：</p>
+<div class="math-display">$$
+r_i^{(l)} = -e_{z_i^{(l)}}^{(l)} \oplus_c r_i^{(l-1)}
+$$</div>
+<p>这和普通 RQ-VAE 的思想一致：每一层选择一个码字，再把已解释的部分从当前表示中扣掉。不同之处在于，所有计算都发生在双曲空间中，距离、加法、缩放都要使用双曲几何操作。</p>
+<h1 id="7-soft-length-controller让长度选择可以训练">7. Soft Length Controller：让长度选择可以训练</h1>
+<p>ID 长度是离散变量。一个商品到底用 4 个 token 还是 7 个 token，本质上是硬决策；深度模型无法直接对这个选择做梯度下降。</p>
+<p>为了解决这个问题，作者设计了 <strong>Soft Length Controller</strong>。</p>
+<p>它不是直接输出“长度等于 5”，而是在每一层输出一个保留概率：</p>
+<div class="math-display">$$
+\alpha_i^{(l)} =
+\sigma\left(
+MLP_{gate}
+\left[
+log_0^c(r_i^{(l-1)}); log_0^c(e_{z_i^{(l)}}^{(l)})
+\right]
+\right)
+$$</div>
+<p>也就是说，第 <span class="math-inline">$l$</span> 层是否保留，不只看商品流行度，而是看两类信息：</p>
+<ul>
+<li>当前残差 <span class="math-inline">$r_i^{(l-1)}$</span>：前面层还有多少没解释完。</li>
+<li>当前选中的码字 <span class="math-inline">$e_{z_i^{(l)}}^{(l)}$</span>：这一层能补充什么语义。</li>
+</ul>
+<p>因此它能做内容自适应判断。如果前几层已经把商品表达清楚，就可以提前停止；如果残差还很大，就继续保留更深层 token。</p>
+<h2 id="71-为什么要用累计-mask">7.1 为什么要用累计 mask</h2>
+<p>语义 ID 有一个前缀约束：如果保留第 5 层，就必须保留前 1 到 4 层。不能出现“跳过第 3 层但保留第 4 层”的情况。</p>
+<p>因此作者定义累计 mask：</p>
+<div class="math-display">$$
+m_i^{(l)} = \prod_{j=1}^{l}\alpha_i^{(j)}
+$$</div>
+<p>这个设计让越深层的保留概率自然受到前面所有层影响。只要前面某一层概率很低，后面层的累计 mask 就会被压下去。</p>
+<p>训练时，<span class="math-inline">$m_i^{(l)}$</span> 是连续值，可以反向传播；推理时使用阈值 <span class="math-inline">$\tau=0.5$</span> 做离散化。比如：</p>
+<ul>
+<li>第 1 层保留概率 0.99</li>
+<li>第 2 层保留概率 0.95</li>
+<li>第 3 层保留概率 0.82</li>
+<li>第 4 层保留概率 0.61</li>
+<li>第 5 层保留概率 0.30</li>
+</ul>
+<p>如果阈值为 0.5，那么前 4 层保留，第 5 层停止，这个商品的 ID 长度就是 4。</p>
+<h2 id="72-soft-controller-和-piba-的关系">7.2 Soft Controller 和 PIBA 的关系</h2>
+<p>PIBA 给出的是一个基于流行度的理论长度先验。它能够告诉模型：大体上热门商品应该短，冷门商品应该长。</p>
+<p>但只用 PIBA 也有问题。两个商品流行度相同，并不代表语义复杂度相同。一个冷门商品可能属于非常明确的小类，短 ID 也够；另一个冷门商品可能语义模糊、属性复杂，需要更长 ID。</p>
+<p>Soft Length Controller 的意义就在这里：<strong>PIBA 提供流行度先验，Controller 根据当前残差和码字内容做微调。</strong> 所以完整模型比“直接按照 PIBA 分配长度”更强。</p>
+<h1 id="8-训练目标表达能力和长度成本之间的权衡">8. 训练目标：表达能力和长度成本之间的权衡</h1>
+<p>VarLenRec 的 HARQ 训练目标由四部分组成：</p>
+<div class="math-display">$$
+\mathcal{L}
+= \mathcal{L}_{recon}
++ \mathcal{L}_{quant}
++ \lambda_{cost}\mathcal{L}_{cost}
++ \lambda_{len}\mathcal{L}_{len}
+$$</div>
+<h2 id="81-重构损失">8.1 重构损失</h2>
+<p>重构损失要求量化后的表示能还原原始物品特征：</p>
+<div class="math-display">$$
+\mathcal{L}_{recon} = \|x_i-\hat{x}_i\|^2
+$$</div>
+<p>它保证语义 ID 不是随便选出来的，而是真的保留了物品内容信息。</p>
+<h2 id="82-量化损失">8.2 量化损失</h2>
+<p>量化损失让编码器输出和选中的码本向量对齐，类似 VQ-VAE / RQ-VAE 中的 commitment loss：</p>
+<div class="math-display">$$
+\mathcal{L}_{quant}
+= \sum_{l=1}^{K}
+\left[
+d_D(sg[r_i^{(l-1)}],\hat{e}_i^{(l)})^2
++ \beta d_D(r_i^{(l-1)},sg[\hat{e}_i^{(l)}])^2
+\right]
+$$</div>
+<p>其中 <span class="math-inline">$sg[\cdot]$</span> 是 stop-gradient。这个损失一方面更新码本，让码字靠近编码器输出；另一方面约束编码器，不要频繁跳动到离码本很远的位置。</p>
+<h2 id="83-长度成本">8.3 长度成本</h2>
+<p>长度成本用于惩罚过长 ID：</p>
+<div class="math-display">$$
+\mathcal{L}_{cost}=\sum_{l=1}^{K}m_i^{(l)}
+$$</div>
+<p>如果没有这个项，模型很可能倾向于给所有商品都用更长 ID，因为长 ID 表达能力更强。但这会带来两个问题：训练和推理成本上升；后面层 token 可能引入噪声。</p>
+<p>论文的消融实验也说明了这一点：去掉长度成本后，Beauty 数据集上的 Recall@10 下降了 5.0%。</p>
+<h2 id="84-长度对齐损失">8.4 长度对齐损失</h2>
+<p>长度对齐损失让模型预测的累计 mask 靠近 PIBA 给出的理论 mask：</p>
+<div class="math-display">$$
+\mathcal{L}_{len}
+=-\sum_{l=1}^{K}
+\left[
+t_i^{(l)}\log m_i^{(l)}
++(1-t_i^{(l)})\log(1-m_i^{(l)})
+\right]
+$$</div>
+<p>这里 <span class="math-inline">$t_i^{(l)}$</span> 是 PIBA 生成的二值目标。这个损失使模型不会完全脱离“热门短、冷门长”的理论约束。</p>
+<p>整体来看，训练目标的平衡点是：<strong>不是越长越好，而是在语义表达能力、长度成本、理论先验之间找到合适的长度。</strong></p>
+<h1 id="9-下游生成阶段变长-id-带来的三个新问题">9. 下游生成阶段：变长 ID 带来的三个新问题</h1>
+<p>变长 ID 在 tokenization 层面很合理，但接入生成式推荐模型时会引入新问题。作者没有只停留在 tokenizer，而是把下游生成中的工程问题也处理了。</p>
+<h2 id="91-问题一id-碰撞">9.1 问题一：ID 碰撞</h2>
+<p>ID 碰撞指两个不同商品被编码成同一串 token。</p>
+<p>固定长度场景下，通常可以追加一个区分 token 解决。例如两个商品都是 <code>[3,7,5,2]</code>，就追加一个额外 token 变成 <code>[3,7,5,2,0]</code> 和 <code>[3,7,5,2,1]</code>。</p>
+<p>但变长场景下这样做会出问题。假设一个短 ID 是 <code>[3,7]</code>，追加主码本 token 5 后变成 <code>[3,7,5]</code>，它可能正好和另一个天然长度为 3 的商品 ID 冲突。而且追加的 token 会被模型误认为是正常语义层 token，污染更深层码本的训练。</p>
+<p>作者的解决办法是：<strong>保留一个和主码本不重叠的辅助码本，专门用于碰撞消解。</strong></p>
+<p>如果主码本 token 范围是 <span class="math-inline">$\{1,...,M\}$</span>，辅助码本就使用 <span class="math-inline">$\{M+1,...,2M\}$</span>。当两个商品都被编码为 <code>[3,7]</code>，就变成：</p>
+<div class="math-display">$$
+[3,7,M+1],\quad [3,7,M+2]
+$$</div>
+<p>这样既保证全局唯一，又不会把消歧 token 和语义 token 混在一起。</p>
+<h2 id="92-问题二幻觉生成">9.2 问题二：幻觉生成</h2>
+<p>生成模型可能生成一串并不存在的商品 ID。例如模型输出 <code>[8,12,4]</code>，但这个 ID 没有对应任何真实商品。</p>
+<p>为此，作者构建了一个前缀树 <strong>Trie</strong>。所有合法商品 ID 都插入 Trie 中，beam search 解码时每一步只能选择当前前缀下存在的合法子节点。这样最终生成出来的序列一定能映射到真实商品。</p>
+<p>这点和很多生成式检索工作类似：不是让模型在完整 token vocab 上随意生成，而是在合法 ID 空间中做约束搜索。</p>
+<h2 id="93-问题三长度偏置">9.3 问题三：长度偏置</h2>
+<p>这是变长 ID 中非常关键的问题。生成模型通常用 token 概率连乘或 log 概率求和来给序列打分：</p>
+<div class="math-display">$$
+\log P(\hat{z}|z_{S_u})
+$$</div>
+<p>短序列天然更占便宜，因为它累积的负 log 项更少。长度为 3 的 ID 比长度为 8 的 ID 少乘很多概率项，即使每一步概率都差不多，短 ID 的总分也更高。</p>
+<p>这会导致模型系统性偏向短 ID，也就是偏向热门商品，正好破坏 VarLenRec 给长尾商品分配长 ID 的初衷。</p>
+<p>作者采用 odds-ratio 风格的重打分：</p>
+<div class="math-display">$$
+s(\hat{z})
+= \max\left(
+0,
+\log\left(
+\frac{P(\hat{z}|z_{S_u})}{1-P(\hat{z}|z_{S_u})}
+\cdot
+\frac{1-P(\hat{z})}{P(\hat{z})}
+\right)
+\right)
+$$</div>
+<p>其中 <span class="math-inline">$P(\hat{z}|z_{S_u})$</span> 是生成模型给出的条件概率，<span class="math-inline">$P(\hat{z})$</span> 是该 ID 前缀在语料中的边际频率。这个重打分有两个作用：</p>
+<ul>
+<li>提升对当前用户条件下高概率 ID 的评分。</li>
+<li>惩罚在全局语料中太常见的前缀，避免热门短前缀天然占优。</li>
+</ul>
+<p>这使得长 ID 和短 ID 在最终排序时更公平。</p>
+<h1 id="10-实验设置与整体结果">10. 实验设置与整体结果</h1>
+<p>论文在四个数据集上做实验：</p>
+<ul>
+<li>Amazon Beauty</li>
+<li>Amazon Sports and Outdoors</li>
+<li>Amazon Toys and Games</li>
+<li>Yelp</li>
+</ul>
+<p>按照 TIGER、LETTER 等工作，过滤掉交互少于 5 的用户和物品。数据划分采用 leave-one-out：每个用户最后一个交互作为测试集，倒数第二个作为验证集，其余作为训练集。</p>
+<p>对比方法分三类：</p>
+<ul>
+<li><strong>传统序列推荐方法</strong>：HGN、GRU4Rec、BERT4Rec、SASRec、FMLP、S3Rec、HSTU。</li>
+<li><strong>固定长度语义 ID 的生成式推荐方法</strong>：TIGER、LC-Rec、ETEGRec。</li>
+<li><strong>增强型生成式推荐方法</strong>：LETTER-TIGER、LETTER-LCRec。</li>
+</ul>
+<p>评价指标是 Recall@5、Recall@10、NDCG@5、NDCG@10，使用 full ranking protocol，不做负采样。</p>
+<p><img src="../assets/images/varlenrec/3.jpg" alt="3"></p>
+<p>从表 1 可以看到：</p>
+<ul>
+<li>VarLenRec-TIGER 一致超过固定长度 TIGER。</li>
+<li>VarLenRec-LCRec 一致超过固定长度 LC-Rec。</li>
+<li>VarLenRec-LCRec 在 Beauty、Sports、Toys 三个数据集上表现最好。</li>
+<li>VarLenRec-TIGER 在 Yelp 上表现最好。</li>
+<li>相比传统序列推荐方法，VarLenRec 系列也有明显优势。</li>
+</ul>
+<p>这说明 VarLenRec 不是绑定某一个特定 backbone 的技巧。它可以增强不同生成式推荐框架，说明“变长语义 ID”是一个相对通用的改进方向。</p>
+<p>论文摘要中提到，VarLenRec 在 NDCG@10 上最高带来 4.7% 的提升。更重要的是，它改善的不只是推荐精度，还包括 ID 碰撞率和推理效率。</p>
+<h1 id="11-消融实验每个组件是否真的有用">11. 消融实验：每个组件是否真的有用</h1>
+<p>论文在 Beauty 和 Toys 上对 VarLenRec-TIGER 做了消融。</p>
+<p><img src="../assets/images/varlenrec/4.jpg" alt="4"></p>
+<h2 id="111-固定长度都不如自适应长度">11.1 固定长度都不如自适应长度</h2>
+<p>表中固定长度 4、6、8、10 都低于完整 VarLenRec。以 Beauty 为例：</p>
+<ul>
+<li>固定长度 4：R@10 = 0.0652，N@10 = 0.0378。</li>
+<li>固定长度 6：R@10 = 0.0671，N@10 = 0.0392。</li>
+<li>固定长度 8：R@10 = 0.0659，N@10 = 0.0385。</li>
+<li>固定长度 10：R@10 = 0.0637，N@10 = 0.0342。</li>
+<li>VarLenRec-TIGER：R@10 = 0.0738，N@10 = 0.0439。</li>
+</ul>
+<p>固定长度 6 通常是一个还可以的折中，但它仍然明显不如按物品自适应分配长度。</p>
+<p>这验证了论文的核心假设：<strong>不同商品确实需要不同语义粒度。</strong></p>
+<h2 id="112-去掉长度成本会变差">11.2 去掉长度成本会变差</h2>
+<p>去掉 <span class="math-inline">$\mathcal{L}_{cost}$</span> 后，Beauty 的 R@10 从 0.0738 降到 0.0701，Toys 的 R@10 从 0.0835 降到 0.0789。</p>
+<p>这说明如果不惩罚长度，模型容易给商品分配过长 ID。过长 ID 不仅增加计算成本，还可能引入推荐无关的细节，影响生成稳定性。</p>
+<h2 id="113-只用-piba-直接分配长度也不够">11.3 只用 PIBA 直接分配长度也不够</h2>
+<p>“w/ Direct PIBA Assignment” 表示直接用 PIBA 的理论长度，不使用 Soft Length Controller 做内容自适应。结果虽然不错，但仍低于完整模型。</p>
+<p>这说明流行度确实是重要先验，但不是唯一因素。商品语义复杂度、当前残差是否已经被解释，也会影响最优长度。因此需要 Soft Length Controller 来做二次调整。</p>
+<h2 id="114-把双曲空间换成欧氏空间会明显下降">11.4 把双曲空间换成欧氏空间会明显下降</h2>
+<p>“w/ Euclidean Space” 表示用欧氏空间替代双曲空间，相当于退回标准 RQ-VAE 风格。Beauty 的 R@10 从 0.0738 降到 0.0692，Toys 的 R@10 从 0.0835 降到 0.0773。</p>
+<p>论文解释为：双曲空间的指数体积增长更适合表达商品层级语义，能让热门商品聚集在原点附近，同时让长尾商品分散到边界附近。欧氏空间没有这种自然的容量分层。</p>
+<h2 id="115-去掉推理集成策略也会变差">11.5 去掉推理集成策略也会变差</h2>
+<p>“w/o Inference Strategies” 同时去掉碰撞消解、Trie 约束解码和长度重打分。Beauty 的 R@10 降到 0.0681，Toys 的 R@10 降到 0.0765。</p>
+<p>这说明变长 ID 不只是 tokenizer 问题。即使 tokenization 做得好，如果生成阶段不处理碰撞、幻觉和长度偏置，最终推荐效果也会受损。</p>
+<h1 id="12-效率分析为什么变长-id-反而更快">12. 效率分析：为什么变长 ID 反而更快</h1>
+<p>变长 ID 看起来更复杂，但实验显示它反而提升了效率。</p>
+<p><img src="../assets/images/varlenrec/5.jpg" alt="5"></p>
+<p>表 3 比较了每个 epoch 的训练和测试时间。VarLenRec-TIGER 在四个数据集上都比 TIGER、LETTER-TIGER、ETEGRec 更快。</p>
+<p>论文报告，VarLenRec 相比 TIGER：</p>
+<ul>
+<li>平均减少 <strong>15.8%</strong> 的训练时间。</li>
+<li>平均减少 <strong>19.3%</strong> 的测试时间。</li>
+</ul>
+<p>原因很直接：热门商品出现频率高，而 VarLenRec 给热门商品分配了更短 ID。训练和生成时，模型需要处理的 token 数减少了。尤其推理阶段，短 ID 可以更早遇到 EOS 或停止条件，避免不必要的解码步骤。</p>
+<p>这点很有意义，因为生成式推荐的一个现实问题就是推理成本。如果所有物品都用很长 ID，生成模型需要逐 token 解码，beam search 成本会比较高。VarLenRec 等于把最多出现的热门物品变短，从而降低整体平均 token 负担。</p>
+<h1 id="13-语义-id-质量分析">13. 语义 ID 质量分析</h1>
+<p>论文除了看推荐效果，还分析了语义 ID 本身的质量，包括碰撞率、长度分布和不同流行度分组上的表现。</p>
+<h2 id="131-碰撞率降低">13.1 碰撞率降低</h2>
+<p>固定长度或普通语义 ID 方法容易出现碰撞，即多个商品共享同一串 token。论文报告，VarLenRec 将平均碰撞率从 <strong>12.7%</strong> 降到 <strong>3.2%</strong>。</p>
+<p>这个结果说明变长机制不仅是为了效率，也提高了 ID 空间利用率。长尾商品可以获得更长、更细的 ID，因此不容易和其他商品挤在同一个短编码里。</p>
+<h2 id="132-不同数据集学到不同平均长度">13.2 不同数据集学到不同平均长度</h2>
+<p>论文报告不同数据集的平均 ID 长度大约在 <strong>5.31 到 7.05</strong> 之间：</p>
+<ul>
+<li>Toys 平均长度较短，为 5.31。</li>
+<li>Yelp 平均长度较长，为 7.05。</li>
+</ul>
+<p>这也符合直觉。Toys 商品类别相对更标准化，语义结构可能更容易被较短 ID 捕获；Yelp 商家差异更复杂，涉及地点、服务类型、消费场景、用户偏好等多维信息，因此需要更长的语义 ID。</p>
+<h2 id="133-解决流行度-长度悖论">13.3 解决流行度-长度悖论</h2>
+<p>论文还分析了不同流行度分组上的效果。固定长度 TIGER 中，热门商品随着最大长度变长而下降，长尾商品随着长度变长而提升，二者方向冲突。</p>
+<p>VarLenRec 通过自适应长度缓解这个冲突：在最大长度变大时，热门商品并不会被迫使用更长 ID；长尾商品则可以使用更长 ID。因此总体效果能更稳定地随最大长度扩展。</p>
+<p>论文报告，在相关分析中，VarLenRec 同时带来：</p>
+<ul>
+<li>Head items：+41.3% 提升。</li>
+<li>Tail items：+6.8% 提升。</li>
+</ul>
+<p>这个结果很关键，因为很多长尾优化方法会以牺牲头部效果为代价，而 VarLenRec 的目标是重新分配编码容量，让头部和长尾都受益。</p>
+<h1 id="14-核心创新点总结">14. 核心创新点总结</h1>
+<h2 id="141-发现-popularity-length-paradox">14.1 发现 Popularity-Length Paradox</h2>
+<p>以前的生成式推荐工作大多把语义 ID 长度当作一个固定超参数，例如统一设为 4、6、8 或 10。本文通过分流行度实验说明：不同商品群体对 ID 长度的需求是相反的。热门商品偏好短 ID，长尾商品偏好长 ID。因此，全局固定长度本质上是次优折中。</p>
+<h2 id="142-提出-piba-理论框架">14.2 提出 PIBA 理论框架</h2>
+<p>PIBA 不是简单凭经验说“热门短、冷门长”，而是从信息预算角度建模：热门商品协同信息多，语义 ID 需要补充的信息少；冷门商品协同信息少，语义 ID 需要补充的信息多。最终推导出：</p>
+<div class="math-display">$$
+L_i^* = C \cdot p_i^{-\alpha/\gamma}
+$$</div>
+<p>这个公式给变长 ID 提供了理论支撑。</p>
+<h2 id="143-用双曲空间承载变长残差量化">14.3 用双曲空间承载变长残差量化</h2>
+<p>双曲空间的指数容量增长适合表达层级语义结构。热门商品可以聚集在紧凑中心区域，长尾商品可以利用边界附近更大的空间表达细粒度差异。这比普通欧氏 RQ-VAE 更适合“热门短、长尾长”的编码目标。</p>
+<h2 id="144-用-soft-length-controller-实现可微长度学习">14.4 用 Soft Length Controller 实现可微长度学习</h2>
+<p>长度选择本来是离散不可微的。Soft Length Controller 把它转化成连续的层保留概率，并通过累计 mask 保证前缀约束。它结合当前残差和码字信息，不只是机械执行流行度规则，而是内容自适应地决定是否继续加 token。</p>
+<h2 id="145-完整处理变长-id-的生成问题">14.5 完整处理变长 ID 的生成问题</h2>
+<p>变长 ID 会带来碰撞、幻觉和长度偏置。作者分别通过辅助码本、Trie 约束解码和 odds-ratio 重打分解决。这使 VarLenRec 不只是一个 tokenizer 模块，而是能真正接入生成式推荐系统。</p>
+<h1 id="15-和-tiger-etegrec-letter-的关系">15. 和 TIGER / ETEGRec / LETTER 的关系</h1>
+<p>这篇文章可以放在生成式推荐语义 ID 发展脉络中理解。</p>
+<p><strong>TIGER</strong> 是生成式推荐的经典开端之一，它证明可以用 RQ-VAE 将物品内容 embedding 离散化成语义 ID，再用 Transformer 生成目标物品。但 TIGER 的语义 ID 是固定长度，tokenizer 和 recommender 也基本是两阶段。</p>
+<p><strong>ETEGRec</strong> 关注的是端到端学习，把 item tokenizer 和 generative recommender 通过对齐机制联合优化，解决“tokenizer 学出来的 token 不一定适合推荐”的问题。</p>
+<p><strong>LETTER</strong> 关注的是 learnable item tokenization，通过引入协同信息、对齐机制等方式提升 token 质量。</p>
+<p><strong>VarLenRec</strong> 切入的是另一个维度：不管 tokenizer 是否端到端、是否引入协同对齐，现有方法基本都默认固定长度。它指出这个固定长度假设本身就不合理，并提出变长 tokenization 机制。论文实验中 VarLenRec 可以接到 TIGER 和 LC-Rec 上，也说明它更像一个“语义 ID 容量分配层”的通用增强模块。</p>
+<p>因此这篇文章的贡献不是替代 TIGER、ETEGRec 或 LETTER，而是补上了一个以前被忽略的设计维度：<strong>ID 长度也应该学习。</strong></p>
+<h1 id="16-最通俗的类比">16. 最通俗的类比</h1>
+<p>可以把商品语义 ID 理解成“商品标签”。</p>
+<p>以前的方法像是规定：所有商品标签都必须写 10 个字。但现实中并不合理。</p>
+<p>“iPhone”这种热门商品，写“苹果手机”可能已经足够让系统识别，因为它有大量用户行为数据支撑。写太多细节，比如颜色、容量、地区版本、配件组合，反而可能干扰推荐。</p>
+<p>一个冷门户外小配件，如果只写“户外用品”，就会和大量商品混在一起。它需要更长标签，比如“户外-露营-炉具配件-便携-某种接口”，才能被区分出来。</p>
+<p>VarLenRec 做的事情就是：<strong>让系统自动决定每个商品标签该写多长；熟悉的商品少写，陌生的商品多写。</strong></p>
+<h1 id="17-我的理解这篇文章真正重要的地方">17. 我的理解：这篇文章真正重要的地方</h1>
+<p>这篇文章的价值不只是提出一个更复杂的量化模型，而是指出生成式推荐中的一个基础设计问题：<strong>语义 ID 的长度本身就是信息容量。</strong></p>
+<p>固定长度 ID 相当于假设所有商品都需要同样的信息容量。但推荐系统里，商品的交互数据、语义复杂度、流行度差异非常大。热门商品依赖协同信号就能被识别，长尾商品却必须依赖内容语义来补足信息。给它们相同长度，本质上是不合理的资源分配。</p>
+<p>我认为这篇文章有三个值得借鉴的点：</p>
+<p>第一，它没有直接提出一个复杂模型，而是先通过分组实验发现一个基础悖论。这个实验很有说服力，因为它把“固定长度为什么不合理”讲清楚了。</p>
+<p>第二，它把经验现象上升为信息预算模型。PIBA 的公式虽然有近似假设，但它提供了一个清晰解释：协同信息越多，语义 ID 需要补的信息越少；协同信息越少，语义 ID 需要补的信息越多。</p>
+<p>第三，它没有只停在理论和 tokenizer，而是处理了变长 ID 在生成阶段真正会遇到的问题。如果没有辅助码本、Trie 约束和长度重打分，变长 ID 很可能在下游生成中反而变得不稳定。</p>
+<p>当然，这篇文章也有可以继续思考的地方。PIBA 主要基于流行度分配长度，但真实系统中影响 ID 长度的因素可能不止流行度。例如：</p>
+<ul>
+<li>某些类别天然语义复杂，需要更长 ID。</li>
+<li>某些商品虽然冷门，但内容非常清晰，短 ID 也可能足够。</li>
+<li>商品流行度会随时间变化，长度分配需要周期更新。</li>
+<li>多模态商品可能需要文本、图像、行为信号共同决定长度。</li>
+</ul>
+<p>论文在未来工作中也提到，可以把变长 tokenization 扩展到多模态、跨域、类别特定或时间动态的分配策略。</p>
+<p>总体来看，这篇文章的核心思想可以浓缩成一句话：</p>
+<p><strong>推荐系统不应该给所有商品同样长的“名字”；商品越热门，名字可以越短；商品越冷门，名字需要越细。</strong></p>
+        </article>
+        <aside class="side-notes" aria-label="侧边摘要">
+          <div class="note-block">
+            <strong>阅读说明</strong>
+            <p>正文尽量保持原始 Markdown 笔记，只做标题锚点、图片路径和数学公式展示适配。</p>
+          </div>
+          <div class="note-block side-links">
+            <strong>章节跳转</strong>
+            <a href="#1-一句话概括">1. 一句话概括</a><a href="#2-背景生成式推荐为什么需要语义-id">2. 背景：生成式推荐为什么需要语义 ID</a><a href="#3-核心发现popularity-length-paradox">3. 核心发现：Popularity-Length Paradox</a><a href="#4-方法总览varlenrec-做了什么">4. 方法总览：VarLenRec 做了什么</a><a href="#5-piba从信息预算推导热门短冷门长">5. PIBA：从信息预算推导“热门短、冷门长”</a><a href="#6-harq为什么要用双曲空间做残差量化">6. HARQ：为什么要用双曲空间做残差量化</a><a href="#7-soft-length-controller让长度选择可以训练">7. Soft Length Controller：让长度选择可以训练</a><a href="#8-训练目标表达能力和长度成本之间的权衡">8. 训练目标：表达能力和长度成本之间的权衡</a>
+          </div>
+          <div class="note-block">
+            <strong>相关入口</strong>
+            <p><a href="../papers.html">返回论文库</a></p>
+          </div>
+        </aside>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="page-shell">
+        <span>© 2026 liuzhao09. Paper note.</span>
+        <a class="text-link" href="../papers.html">返回论文库</a>
+      </div>
+    </footer>
+  </body>
+</html>
