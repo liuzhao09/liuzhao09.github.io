@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>RecGPT-Mobile 解读 | liuzhao09</title>
+    <meta
+      name="description"
+      content="RecGPT-Mobile 论文解读：端侧 LLM、用户意图理解、自适应 prompt、意图漂移触发机制和淘宝 feed 推荐线上实验。"
+    >
+    <link rel="stylesheet" href="../assets/css/site.css">
+  </head>
+  <body class="paper-page">
+    <header class="site-header paper">
+      <nav class="nav" aria-label="主导航">
+        <a class="brand" href="../index.html">
+          <span class="brand-mark">LZ</span>
+          <span>liuzhao09</span>
+        </a>
+        <div class="nav-links">
+          <a href="../index.html">首页</a>
+          <a href="../papers.html">论文库</a>
+          <a href="https://github.com/liuzhao09">GitHub</a>
+        </div>
+      </nav>
+    </header>
+
+    <main class="page-shell">
+      <section class="paper-hero">
+        <div>
+          <p class="breadcrumb">
+            <a href="../papers.html">论文库</a> / LLM4Rec / RecGPT-Mobile
+          </p>
+          <h1 class="paper-title">
+            RecGPT-Mobile: 端侧 LLM 如何理解淘宝 Feed 用户意图
+          </h1>
+          <p class="paper-dek">
+            这篇论文把“用户行为序列到显式搜索意图 query”的推断放到手机端，
+            用轻量 LLM、自适应 prompt 和意图漂移触发机制提升推荐实时性。
+          </p>
+          <div class="tag-row">
+            <span class="tag">SIGIR 2026</span>
+            <span class="tag">Qwen3-0.6B-Quant</span>
+            <span class="tag">Intent Agent</span>
+            <span class="tag">Taobao Feed</span>
+          </div>
+        </div>
+
+        <aside class="paper-meta" aria-label="论文信息">
+          <dl>
+            <div>
+              <dt>论文</dt>
+              <dd>RecGPT-Mobile</dd>
+            </div>
+            <div>
+              <dt>来源</dt>
+              <dd>阿里淘宝天猫集团 · SIGIR 2026</dd>
+            </div>
+            <div>
+              <dt>原文</dt>
+              <dd><a href="https://arxiv.org/pdf/2605.04726">arXiv 2605.04726</a></dd>
+            </div>
+            <div>
+              <dt>站点路径</dt>
+              <dd>papers/recgpt-mobile.html</dd>
+            </div>
+          </dl>
+        </aside>
+      </section>
+
+      <div class="article-layout">
+        <nav class="toc" aria-label="文章目录">
+          <a href="#summary">一句话</a>
+          <a href="#problem">问题背景</a>
+          <a href="#system">系统框架</a>
+          <a href="#training">训练数据</a>
+          <a href="#prompt">自适应 Prompt</a>
+          <a href="#trigger">触发机制</a>
+          <a href="#results">实验结果</a>
+          <a href="#takeaways">我的判断</a>
+        </nav>
+
+        <article class="article">
+          <section class="article-section" id="summary">
+            <h2>一句话概括</h2>
+            <p class="quote-box">
+              RecGPT-Mobile 把“用户行为序列到显式搜索意图 query”的推断放到移动端，
+              在端侧资源受限的情况下提升淘宝 feed 推荐的实时性和转化效果。
+            </p>
+            <p>
+              它不是一个完整的端侧推荐系统，也不是让 LLM 直接生成商品列表。
+              它更像一个端侧 intent agent：把用户最近的点击、加购、收藏、购买等行为
+              转成 query/tags，再交给云端搜索和召回系统。
+            </p>
+            <div class="metric-row">
+              <div class="metric">
+                <strong>+1.8%</strong>
+                <span>平均 CLICK</span>
+              </div>
+              <div class="metric">
+                <strong>+2.7%</strong>
+                <span>平均 PAY</span>
+              </div>
+              <div class="metric">
+                <strong>+2.5%</strong>
+                <span>平均 GMV</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="article-section" id="problem">
+            <h2>1. 它解决什么问题</h2>
+            <p>
+              传统电商推荐大多是云端架构。用户行为从 App 采集、上传、清洗、进入特征中心，
+              再被召回和排序模型消费，这条链路稳定但天然有延迟。
+              Feed 场景下，用户可能在几十秒内从泛化浏览变成明确购买意图，
+              云端日志链路不一定能马上捕捉到这种 session 内变化。
+            </p>
+            <p>
+              论文的关键选择是把任务定义为 next-query prediction：
+              给定最近异构行为序列，预测用户下一步可能搜索的 query。
+              这个 query 比 item ID 更短、更稳定，也更容易接入现有搜索召回系统。
+            </p>
+            <pre class="formula">recent behaviors -> intent query/tags -> retrieval -> ranking</pre>
+          </section>
+
+          <section class="article-section" id="system">
+            <h2>2. 系统整体框架</h2>
+            <p>
+              系统分成端侧 Client Services 和云侧 Cloud Services。端侧负责采集最近行为、
+              构造 prompt、运行 Intent Agent；云侧负责大规模商品召回、模型训练、模型同步和推理优化。
+            </p>
+            <figure class="figure">
+              <img
+                src="../assets/images/recgpt-mobile/framework.jpg"
+                alt="RecGPT-Mobile 端云协同系统框架"
+              >
+              <figcaption>RecGPT-Mobile 的端云协同框架：端侧做实时意图理解，云侧做检索和训练。</figcaption>
+            </figure>
+            <h3>端侧模块</h3>
+            <ul>
+              <li>User Behavior Collection：本地采集 click、cart、favorite、purchase 等行为。</li>
+              <li>Prompt Construction：把行为、场景和用户画像压缩成适合小模型的 prompt。</li>
+              <li>Intent Agent：端侧 LLM，将复杂行为信号转成明确 query/tags。</li>
+            </ul>
+            <h3>云侧模块</h3>
+            <ul>
+              <li>Item Retrieval：根据端侧 query 做候选召回。</li>
+              <li>LLM Training：负责 SFT、Prompt Adaptation、Inference Optimization、Model Synchronization。</li>
+            </ul>
+          </section>
+
+          <section class="article-section" id="training">
+            <h2>3. 监督微调数据怎么来</h2>
+            <p>
+              论文用多源数据构造 SFT 样本，让小模型学习“行为序列到 query”的映射。
+              这部分很重要，因为端侧模型容量小，不能依赖模型规模自动补齐任务知识。
+            </p>
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>样本类型</th>
+                  <th>来源</th>
+                  <th>比例</th>
+                  <th>作用</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Behavior-driven</td>
+                  <td>购买与搜索日志</td>
+                  <td>60%</td>
+                  <td>学习真实行为到 query 的映射</td>
+                </tr>
+                <tr>
+                  <td>Co-purchase</td>
+                  <td>共购矩阵</td>
+                  <td>20%</td>
+                  <td>补充互补需求，如手机到手机壳</td>
+                </tr>
+                <tr>
+                  <td>LLM-based</td>
+                  <td>GPT 改写</td>
+                  <td>15%</td>
+                  <td>增强表达多样性</td>
+                </tr>
+                <tr>
+                  <td>Human-annotated</td>
+                  <td>人工标注</td>
+                  <td>5%</td>
+                  <td>提供质量锚点和校准信号</td>
+                </tr>
+              </tbody>
+            </table>
+          </section>
+
+          <section class="article-section" id="prompt">
+            <h2>4. 自适应 Prompt 构造</h2>
+            <p>
+              端侧 LLM 的 prompt 不能无限长。Adaptive Prompt Construction 的核心是：
+              根据场景和行为特征选择模板、选择结构组件，并在 token、latency、memory 预算下剪枝。
+            </p>
+            <figure class="figure">
+              <img
+                src="../assets/images/recgpt-mobile/adaptive-prompt.jpg"
+                alt="Adaptive Prompt Construction 算法图"
+              >
+              <figcaption>自适应 prompt 构造：先抽取行为特征，再选择模板和组件，最后受预算约束。</figcaption>
+            </figure>
+            <ol>
+              <li>从行为序列抽取 action type、recency、diversity、frequency 等特征。</li>
+              <li>根据当前场景选择最合适的 prompt 模板。</li>
+              <li>判断是否加入用户画像、商品标题、品类、品牌、行为时间等组件。</li>
+              <li>在端侧预算内保留边际收益最高的信息。</li>
+            </ol>
+            <p>
+              这一步本质上是信息选择问题：不是把所有行为塞给 LLM，而是在有限预算下挑选最能帮助意图预测的信号。
+            </p>
+          </section>
+
+          <section class="article-section" id="trigger">
+            <h2>5. 什么时候触发端侧 LLM</h2>
+            <p>
+              如果每次点击都调用 LLM，延迟、功耗和发热都会不可接受。
+              论文设计了 Mobile Intent Agent Trigger Pipeline：只有当用户意图发生明显漂移时才更新 query，
+              否则复用缓存结果。
+            </p>
+            <figure class="figure">
+              <img
+                src="../assets/images/recgpt-mobile/trigger-pipeline.jpg"
+                alt="Mobile Intent Agent Trigger Pipeline 图"
+              >
+              <figcaption>触发机制通过统计信号判断意图是否变化，再决定是否调用 Intent Agent。</figcaption>
+            </figure>
+            <h3>三个漂移信号</h3>
+            <ul>
+              <li>Entropy：用户兴趣从发散到聚焦，或从聚焦到发散。</li>
+              <li>Jaccard Similarity：当前语义标签集合和上一次触发点是否变化。</li>
+              <li>JS Divergence：标签分布比例是否发生明显变化。</li>
+            </ul>
+            <pre class="formula">intent drift = 0.4 * entropy change + 0.3 * (1 - Jaccard) + 0.3 * JS divergence
+trigger when intent drift > 0.8</pre>
+            <p>
+              这个设计比“模型更小”本身更关键。端侧 LLM 能不能上线，取决于单次推理成本和调用频率两个变量。
+            </p>
+          </section>
+
+          <section class="article-section" id="results">
+            <h2>6. 实验结果怎么看</h2>
+            <p>
+              离线自动评估显示，LoRA 微调显著提升生成 query 的语义一致性、逻辑一致性和表达质量；
+              量化后有小幅退化，但总体仍保留了大部分效果。线上部署使用 Qwen3-0.6B-Quant。
+            </p>
+            <figure class="figure">
+              <img
+                src="../assets/images/recgpt-mobile/offline-results.jpg"
+                alt="RecGPT-Mobile 离线评估结果表"
+              >
+              <figcaption>离线评估显示 LoRA 明显优于 Base，量化损失相对可控。</figcaption>
+            </figure>
+            <figure class="figure">
+              <img
+                src="../assets/images/recgpt-mobile/online-ab.jpg"
+                alt="RecGPT-Mobile 线上 A/B 实验结果表"
+              >
+              <figcaption>线上 A/B 覆盖千万级用户和四个场景，PAY 与 GMV 提升高于 CLICK。</figcaption>
+            </figure>
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>场景</th>
+                  <th>CLICK</th>
+                  <th>PAY</th>
+                  <th>GMV</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Payment Success Page</td>
+                  <td>+1.3%</td>
+                  <td>+2.3%</td>
+                  <td>+2.5%</td>
+                </tr>
+                <tr>
+                  <td>Shipment Tracking Page</td>
+                  <td>+2.4%</td>
+                  <td>+2.9%</td>
+                  <td>+3.0%</td>
+                </tr>
+                <tr>
+                  <td>Shopping Cart Page</td>
+                  <td>+2.5%</td>
+                  <td>+2.7%</td>
+                  <td>+2.9%</td>
+                </tr>
+                <tr>
+                  <td>Order List Page</td>
+                  <td>+0.8%</td>
+                  <td>+1.8%</td>
+                  <td>+1.8%</td>
+                </tr>
+              </tbody>
+            </table>
+            <figure class="figure">
+              <img
+                src="../assets/images/recgpt-mobile/latency.jpg"
+                alt="RecGPT-Mobile 移动端推理延迟曲线"
+              >
+              <figcaption>端侧推理延迟在不同日期和 percentile 下整体稳定，结合触发机制后具备上线可行性。</figcaption>
+            </figure>
+          </section>
+
+          <section class="article-section" id="takeaways">
+            <h2>7. 我的判断</h2>
+            <h3>最值得借鉴的点</h3>
+            <ul>
+              <li>把 LLM 放在语义中间层，而不是直接接管完整推荐链路。</li>
+              <li>用 query/tags 作为可控输出，方便召回、缓存、审核和回退。</li>
+              <li>用轻量统计信号控制 LLM 调用频率，避免端侧成本失控。</li>
+              <li>用少量人工数据做质量锚点，配合日志、共购和 LLM 改写扩展覆盖。</li>
+            </ul>
+            <h3>还没有完全展开的问题</h3>
+            <ul>
+              <li>Adaptive Prompt 的 template pool、component set 和 scorer 细节不够完整。</li>
+              <li>触发阈值来自启发式搜索，不同设备和场景下是否稳定仍需验证。</li>
+              <li>论文没有充分展开功耗、发热、机型差异和前台 UI 流畅度。</li>
+              <li>query 生成错误后的 fallback、过滤和置信度机制仍需要工程补充。</li>
+            </ul>
+            <p>
+              总体来看，RecGPT-Mobile 的价值主要在工程范式：它不让 LLM 生成最终推荐结果，
+              而是生成推荐系统真正缺少的实时语义信号。
+            </p>
+          </section>
+        </article>
+
+        <aside class="side-notes" aria-label="侧边摘要">
+          <div class="note-block">
+            <strong>核心定位</strong>
+            <p>端侧 intent agent，而不是完整端侧推荐系统。</p>
+          </div>
+          <div class="note-block">
+            <strong>关键模型</strong>
+            <p>Qwen3-0.6B-Quant，配合 LoRA 和量化部署。</p>
+          </div>
+          <div class="note-block">
+            <strong>工程关键</strong>
+            <p>自适应 prompt、意图漂移触发、缓存和云端召回。</p>
+          </div>
+          <div class="note-block">
+            <strong>下一步</strong>
+            <p>后续新增论文时，可以复用本文的问题、方法、证据、局限结构。</p>
+          </div>
+        </aside>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="page-shell">
+        <span>© 2026 liuzhao09. RecGPT-Mobile paper note.</span>
+        <a class="text-link" href="../papers.html">返回论文库</a>
+      </div>
+    </footer>
+  </body>
+</html>
