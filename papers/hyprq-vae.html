@@ -6,6 +6,10 @@
     <title>HypRQ-VAE 解读 | liuzhao09</title>
     <meta name="description" content="HypRQ-VAE 将 RQ-VAE 的残差量化迁移到双曲空间，为生成式推荐构造更长尾友好的 semantic ID。">
     <link rel="stylesheet" href="../assets/css/site.css">
+    <script>
+      window.MathJax = { tex: { inlineMath: [['$', '$'], ['\\(', '\\)']], displayMath: [['$$', '$$'], ['\\[', '\\]']] }, svg: { fontCache: 'global' } };
+    </script>
+    <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
   </head>
   <body>
     <header class="site-header">
@@ -62,7 +66,7 @@
 <p>去重状态：未发现历史重复笔记或主页页面。</p>
 <h2 id="0">0. 导读</h2>
 <p>这篇论文处理的是生成式推荐中的 item indexing 问题。传统序列推荐把用户历史表示成 item ID 序列，模型学习“下一个 item ID 是什么”。LLM 进入推荐之后，很多方法希望把推荐改造成语言生成任务，但这里有一个不自然的接口：LLM 擅长生成文本 token，而推荐系统真正要落地的是目录里的离散物品。直接让 LLM 生成标题或描述，容易产生不存在的物品；直接把原始 item ID 拆成 token，又没有语义，也会形成巨大且难学习的词表。</p>
-<p>近几年生成式推荐常用 semantic ID 来解决这个接口问题。做法是先用一个 tokenizer 把每个 item 编成若干离散 code token，例如 <code>&lt;a_1&gt;&lt;b_3&gt;&lt;c_2&gt;&lt;d_9&gt;</code>，再训练生成模型根据用户历史生成目标 item 的 code 序列。TIGER 这类方法使用 RQ-VAE 在欧氏空间里做残差量化，能把文本语义压缩为层级 token。但是论文认为，真实推荐目录天然是长尾分布：少数头部 item 占据大量交互，大量尾部 item 只有稀疏曝光，却往往承载用户的小众兴趣。欧氏空间在这种幂律结构上会更偏向头部 item，尾部 item 的表示和量化质量不足。</p>
+<p>近几年生成式推荐常用 semantic ID 来解决这个接口问题。做法是先用一个 tokenizer 把每个 item 编成若干离散 code token，例如 <span class="math-inline">$\langle a_1\rangle\langle b_3\rangle\langle c_2\rangle\langle d_9\rangle$</span>，再训练生成模型根据用户历史生成目标 item 的 code 序列。TIGER 这类方法使用 RQ-VAE 在欧氏空间里做残差量化，能把文本语义压缩为层级 token。但是论文认为，真实推荐目录天然是长尾分布：少数头部 item 占据大量交互，大量尾部 item 只有稀疏曝光，却往往承载用户的小众兴趣。欧氏空间在这种幂律结构上会更偏向头部 item，尾部 item 的表示和量化质量不足。</p>
 <p>HypRQ-VAE 的核心想法很直接：既然双曲空间擅长表达树状、层级、幂律结构，就把 RQ-VAE 的残差量化搬进双曲空间。模型先把 item 的文本 embedding 通过 DNN encoder 得到欧氏潜向量，再用指数映射投到 Poincare ball；每一层 codebook 的 nearest code、残差更新和 code 聚合都用双曲空间里的距离、Mobius subtraction 和 Mobius addition 来完成；最后再用对数映射回到切空间，经 decoder 重构原始 embedding。这样得到的离散 code 序列既保留文本语义，又试图给尾部 item 更充足的几何容量。</p>
 <p>从实验看，论文在 MovieLens、Amazon Instruments、Amazon Arts 三个数据集上比较 MF、Caser、SASRec、P5-TID、P5-CID、TIGER、LC-Rec、LETTER 等基线。整体指标上 HypRQ-VAE 基本最佳，真正有辨识度的是头尾拆分：相比欧氏 RQ-VAE，HypRQ-VAE 在 tail item 上的相对提升明显更大，例如 MovieLens 的 T80 Hit@10 提升 52.71%，远高于 H20 的 14.09%。这支持论文的主张：双曲几何不只是换了一个 embedding 空间，而是在 item indexing 阶段改变了模型对长尾目录的容量分配。</p>
 <p>这篇论文对推荐工程的价值在于，它提醒我们 semantic ID tokenizer 本身就是生成式推荐的关键模型组件。很多系统会把 tokenizer 当成离线预处理，随后主要优化 LLM 或序列模型；但如果 tokenizer 对长尾 item 编码不好，后续生成器再强也会被错误或低分辨率的 item vocabulary 限制。HypRQ-VAE 的贡献不在于提出新的推荐损失，而在于把“索引空间是否匹配推荐目录结构”这个问题放到了台前。</p>
@@ -74,18 +78,18 @@
 <p>论文实际要回答两个问题。第一，双曲模型能不能有效生成 item ID，而不是只做传统 embedding 召回或评分。第二，相比欧氏 RQ-VAE，它是否真的能改善长尾 item 推荐。为此，论文把每个数据集按照流行度切成 top 20% 的 H20 和 bottom 80% 的 T80，用整体指标和头尾拆分指标同时评估。</p>
 <h2 id="2">2. 核心方法</h2>
 <p>HypRQ-VAE 可以拆成两段：第一段生成 semantic ID，第二段用 semantic ID 训练生成式推荐器。第一段是本文主要创新，第二段沿用 LLM-based generative recommendation 的常规范式。</p>
-<p>在 semantic ID 生成阶段，输入是 item 的文本信息 embedding <code>x</code>。模型先用 DNN encoder 得到欧氏潜向量 <code>z_e</code>，然后通过以原点为基准的 exponential map 把 <code>z_e</code> 投到 Poincare ball 中，得到双曲向量 <code>z_h</code>。这个 <code>z_h</code> 被视为第 0 层残差 <code>r_0</code>。之后模型有 <code>L</code> 层 codebook，每层 codebook 里有 <code>K</code> 个可学习 code vector。</p>
-<p>每一层量化时，模型不是用普通欧氏距离找最近中心，而是在双曲空间里计算 residual 和 code vector 的距离。论文用 Mobius subtraction 表示残差更新：在第 <code>l</code> 层选中最近 code <code>e_{c_l}^l</code> 后，下一层残差变成 <code>r_{l+1} = r_l ⊖ e_{c_l}^l</code>。所有被选中的 code vector 再用 Mobius addition 聚合为量化表示。聚合后的双曲向量通过 logarithmic map 回到欧氏切空间，交给 decoder 重构原始 item embedding。</p>
-<p>训练损失由两部分组成。第一部分是 reconstruction loss，约束 decoder 输出接近原始 embedding。第二部分是 RQ quantization loss，包括 codebook 更新项和 commitment 项，并使用 stop-gradient 稳定训练。论文表 5 给出的主设置是 <code>L=4</code>、<code>K=256</code>，<code>beta=0.25</code>、<code>gamma=4</code>，Stage 1 使用 Adam 训练 5000 epoch。</p>
-<p>生成出的 semantic ID 是每层 code index 的序列。例如图 3 给出的 <code>(1, 3, 2, 9)</code> 会格式化成 <code>&lt;a_1&gt;&lt;b_3&gt;&lt;c_2&gt;&lt;d_9&gt;</code>。这种格式有两个好处：一是不同层使用不同前缀，能让生成模型知道 token 所属层级；二是 code 序列可以被自回归模型自然生成，和语言模型的训练接口一致。</p>
+<p>在 semantic ID 生成阶段，输入是 item 的文本信息 embedding <span class="math-inline">$x$</span>。模型先用 DNN encoder 得到欧氏潜向量 <span class="math-inline">$z_e$</span>，然后通过以原点为基准的 exponential map 把 <span class="math-inline">$z_e$</span> 投到 Poincare ball 中，得到双曲向量 <span class="math-inline">$z_h$</span>。这个 <span class="math-inline">$z_h$</span> 被视为第 0 层残差 <span class="math-inline">$r_0$</span>。之后模型有 <span class="math-inline">$L$</span> 层 codebook，每层 codebook 里有 <span class="math-inline">$K$</span> 个可学习 code vector。</p>
+<p>每一层量化时，模型不是用普通欧氏距离找最近中心，而是在双曲空间里计算 residual 和 code vector 的距离。论文用 Mobius subtraction 表示残差更新：在第 <span class="math-inline">$\ell$</span> 层选中最近 code <span class="math-inline">$e_{c_\ell}^{\ell}$</span> 后，下一层残差变成 <span class="math-inline">$r_{\ell+1}=r_\ell \ominus e_{c_\ell}^{\ell}$</span>。所有被选中的 code vector 再用 Mobius addition 聚合为量化表示。聚合后的双曲向量通过 logarithmic map 回到欧氏切空间，交给 decoder 重构原始 item embedding。</p>
+<p>训练损失由两部分组成。第一部分是 reconstruction loss，约束 decoder 输出接近原始 embedding。第二部分是 RQ quantization loss，包括 codebook 更新项和 commitment 项，并使用 stop-gradient 稳定训练。论文表 5 给出的主设置是 <span class="math-inline">$L=4$</span>、<span class="math-inline">$K=256$</span>，<span class="math-inline">$\beta=0.25$</span>、<span class="math-inline">$\gamma=4$</span>，Stage 1 使用 Adam 训练 5000 epoch。</p>
+<p>生成出的 semantic ID 是每层 code index 的序列。例如图 3 给出的 <span class="math-inline">$(1,3,2,9)$</span> 会格式化成 <span class="math-inline">$\langle a_1\rangle\langle b_3\rangle\langle c_2\rangle\langle d_9\rangle$</span>。这种格式有两个好处：一是不同层使用不同前缀，能让生成模型知道 token 所属层级；二是 code 序列可以被自回归模型自然生成，和语言模型的训练接口一致。</p>
 <p>论文还处理了 semantic ID collision。多个 item 被压缩为同一组 code 时，生成器无法唯一映射回 item。已有方法常追加辅助 ID 或加均匀约束，但论文认为这些方法仍可能留下冲突，尤其当冲突 item 数超过最后一层 codebook 容量时。HypRQ-VAE 使用基于 codebook proximity 的级联重分配：对冲突 item 计算它们到各层各 code 的双曲距离，从最后一层开始分配最近可用 token；如果多个 item 争同一 token，就把距离最小的 item 分到该 token，其余 item 依次尝试下一个可用 token；如果最后一层不够，再向前一层重复。这是一个后处理式唯一化策略，不是端到端学习出的冲突消解器。</p>
-<p>第二段是 generative recommender。给定用户按时间排序的历史 item，系统把每个 item 替换成 HypRQ-VAE 生成的 semantic ID，再把所有 code token 展平成一个序列，嵌入自然语言 prompt。模型训练目标是根据历史 semantic ID 序列生成下一个 item 的 semantic ID。论文使用 LLaMA2-7B 加 LoRA，LoRA 设置为 <code>r=8, alpha=32, dropout=0.05</code>，Stage 2 用 AdamW、学习率 <code>1e-4</code>、cosine schedule 训练 4 个 epoch。推理阶段对所有 generative model 使用 beam size 20，并做 full ranking 评估。</p>
+<p>第二段是 generative recommender。给定用户按时间排序的历史 item，系统把每个 item 替换成 HypRQ-VAE 生成的 semantic ID，再把所有 code token 展平成一个序列，嵌入自然语言 prompt。模型训练目标是根据历史 semantic ID 序列生成下一个 item 的 semantic ID。论文使用 LLaMA2-7B 加 LoRA，LoRA 设置为 <span class="math-inline">$r=8,\alpha=32,\mathrm{dropout}=0.05$</span>，Stage 2 用 AdamW、学习率 <code>1e-4</code>、cosine schedule 训练 4 个 epoch。推理阶段对所有 generative model 使用 beam size 20，并做 full ranking 评估。</p>
 <p>这里要注意，论文标题和附录容易让人误读成“差分长度 codebook 策略”。正文的实际做法仍是固定长度 semantic ID，长度 <code>L</code> 在主模型中是一个超参数。消融部分显示 <code>L</code> 从 3 增到 6 时 MovieLens 性能提升，继续增到 8 会下降，原因是自回归生成更长 code 序列会累积错误。附录最后提到未来可以按层自适应分配容量：前几层表示粗语义，可能不需要太大空间，后几层表示细粒度信息，可能需要更高容量。这更像“自适应层容量”的未来方向，而不是本文已经实现并验证的 differential-length codebook。</p>
 <h2 id="3">3. 图表解读</h2>
 <p><img alt="" src="../assets/images/hyprq-vae/1.jpg" /></p>
 <p>图 1 是论文动机图。绿色曲线表示 item popularity 的长尾分布，红色曲线表示 semantic token 也存在长尾结构。示例中 “Movie / Words” 是较粗粒度语义，而 “Beauty (2022)” 和 “Mutant (1984)” 这样的具体电影或词项位于更细粒度、更稀疏的位置。论文借这个图说明：item 交互频率和 item 语义本身都不是均匀分布，semantic ID tokenizer 如果只在欧氏空间里压缩，很容易优先照顾高频头部区域。</p>
 <p><img alt="" src="../assets/images/hyprq-vae/2.jpg" /></p>
-<p>图 3 展示 HypRQ-VAE 的编码流程。左侧 item embedding <code>x</code> 经过 DNN encoder 得到 <code>z_e</code>，再通过 <code>exp</code> 进入双曲空间成为 <code>z_h</code>。中间四个量化层依次选中 code 1、3、2、9，并用双曲残差继续向后细化。右侧把选中 code 聚合成 <code>z_h_hat</code>，通过 <code>log</code> 回到切空间得到 <code>z_e_hat</code>，再交给 decoder 重构。这个图的关键是残差更新发生在双曲空间，不只是把普通 RQ-VAE 的输出投影到双曲空间。</p>
+<p>图 3 展示 HypRQ-VAE 的编码流程。左侧 item embedding <span class="math-inline">$x$</span> 经过 DNN encoder 得到 <span class="math-inline">$z_e$</span>，再通过 <span class="math-inline">$\exp$</span> 进入双曲空间成为 <span class="math-inline">$z_h$</span>。中间四个量化层依次选中 code 1、3、2、9，并用双曲残差继续向后细化。右侧把选中 code 聚合成 <span class="math-inline">$\hat{z}_h$</span>，通过 <span class="math-inline">$\log$</span> 回到切空间得到 <span class="math-inline">$\hat{z}_e$</span>，再交给 decoder 重构。这个图的关键是残差更新发生在双曲空间，不只是把普通 RQ-VAE 的输出投影到双曲空间。</p>
 <p><img alt="" src="../assets/images/hyprq-vae/3.jpg" /></p>
 <p>图 4 是生成式推荐架构。上方是 Transformer decoder 基座模型，下方展示 item 文本信息先经过 HypRQ-VAE 变成 semantic ID，用户历史被写成 code token 流，再拼入 prompt。目标序列也是 semantic ID。这个设计把推荐任务转换成“给定用户历史 token，生成下一组 code token”。因此，item tokenizer 的质量直接决定生成器能否输出有效、唯一且语义合适的 item。</p>
 <p><img alt="" src="../assets/images/hyprq-vae/4.jpg" /></p>
@@ -125,62 +129,30 @@
 <h2 id="7">7. 局限与风险</h2>
 <ol>
 <li>OpenReview 页面显示该稿件为 ICLR 2026 Conference Withdrawn Submission，PDF 仍是匿名双盲稿。论文状态、作者机构和代码可用性都需要后续再核验。</li>
-</ol>
-<ol>
 <li>代码链接本轮访问返回 401，无法检查实现细节。双曲算子、collision reassignment、数据切分和 prompt 模板都可能影响复现结果。</li>
-</ol>
-<ol>
 <li>表 2 中 Arts All Hit@10 疑似有数值或排版错误。虽然不改变长尾趋势，但严谨引用时应避免单独引用该异常单元格。</li>
-</ol>
-<ol>
 <li>论文只在三个公开 benchmark 上评估，没有线上 A/B、人群分层、类目分层或新 item 生命周期分析。离线 long-tail 改善不等于线上生态收益。</li>
-</ol>
-<ol>
 <li>HypRQ-VAE 主要改进 item indexing，没有解决生成式推荐中的所有问题，例如用户意图变化、会话上下文、多目标排序、业务约束和安全过滤。</li>
-</ol>
-<ol>
 <li>Collision handling 是启发式后处理。它能保证唯一 ID，但可能牺牲部分语义邻近性，尤其在大规模目录和大量近重复 item 中需要进一步评估。</li>
-</ol>
-<ol>
 <li>双曲空间引入额外实现复杂度和数值风险。训练不稳定、curvature 设置不当或 codebook 利用不均衡，都可能抵消理论上的表示优势。</li>
-</ol>
-<ol>
 <li>长 semantic ID 会增加自回归生成难度。论文消融已经显示 <code>L</code> 过大性能下降，这意味着提升 item 分辨率和保证生成准确之间存在真实 tradeoff。</li>
-</ol>
-<ol>
 <li>论文使用的文本信息主要是 title + description。对于图像、视频、商品属性、价格、库存等多模态业务特征，HypRQ-VAE 是否仍然最优还没有验证。</li>
-</ol>
-<ol>
 <li>双曲空间更偏长尾并不自动等于公平。推荐更多尾部 item 可能提升多样性，也可能引入低质量、过期或不相关 item，需要结合质量和用户满意度指标判断。</li>
 </ol>
 <h2 id="8">8. 后续跟进</h2>
 <ol>
 <li>继续跟踪 OpenReview 或作者主页，确认是否出现非匿名 arXiv 版本、正式发表版本、机构列表和可访问代码仓库。</li>
-</ol>
-<ol>
 <li>复查表 2 Arts All Hit@10 的疑似错误，优先以作者后续版本或开源代码复现实验为准。</li>
-</ol>
-<ol>
 <li>在一个更大规模、更稀疏的推荐数据集上复现 HypRQ-VAE tokenizer，重点比较 collision rate、code utilization、H20/T80 AQE 和 tail recall。</li>
-</ol>
-<ol>
 <li>对比 Euclidean RQ-VAE、HypRQ-VAE、Sinkhorn/uniform regularization、LETTER-style diversity regularization 的组合效果，判断双曲几何和均匀约束是否互补。</li>
-</ol>
-<ol>
 <li>尝试 variable-length semantic ID 或 per-layer variable codebook size，把论文附录中的 adaptive capacity 未来方向做成可验证实验。</li>
-</ol>
-<ol>
 <li>加入 constrained decoding 与非法 ID 率评估，测量 beam search 生成 code 序列时的合法率、唯一映射率和延迟。</li>
-</ol>
-<ol>
 <li>用多模态 item 表示替换纯文本 embedding，观察双曲空间是否仍对长尾 item 有更强表达能力。</li>
-</ol>
-<ol>
 <li>在业务评估中加入曝光公平、多样性、覆盖率、新品成长和用户长期满意度，避免只用 Hit/NDCG 判断长尾推荐价值。</li>
 </ol>
 <h2 id="9">9. 工程侧补充：把 HypRQ-VAE 放入生成式推荐系统</h2>
-<p>在真实系统里，我会把 HypRQ-VAE 放在离线 item tokenizer 层，而不是直接改线上排序模型。离线层周期性读取 item 文本、属性和多模态特征，训练或增量更新 tokenizer，输出 <code>item_id -&gt; semantic_id</code> 映射、<code>semantic_id -&gt; item_id</code> 反向映射、collision 日志和 codebook 统计。线上召回或生成模型只消费稳定版本的 semantic ID，避免 tokenizer 每天变化导致用户历史 token 序列不可比。</p>
-<p>版本管理非常关键。只要 semantic ID 重新训练，同一个 item 的 code 可能变化，历史序列、训练样本、在线 trie 和反向映射都必须切到同一版本。推荐系统可以保留最近几个 tokenizer version，在训练、回放和线上服务中显式带上 version 字段。否则模型生成的 <code>&lt;a_1&gt;&lt;b_3&gt;&lt;c_2&gt;&lt;d_9&gt;</code> 在不同版本中可能对应不同 item，问题会非常隐蔽。</p>
+<p>在真实系统里，我会把 HypRQ-VAE 放在离线 item tokenizer 层，而不是直接改线上排序模型。离线层周期性读取 item 文本、属性和多模态特征，训练或增量更新 tokenizer，输出 <code>item_id</code> 到 <code>semantic_id</code> 的映射、<code>semantic_id</code> 到 <code>item_id</code> 的反向映射、collision 日志和 codebook 统计。线上召回或生成模型只消费稳定版本的 semantic ID，避免 tokenizer 每天变化导致用户历史 token 序列不可比。</p>
+<p>版本管理非常关键。只要 semantic ID 重新训练，同一个 item 的 code 可能变化，历史序列、训练样本、在线 trie 和反向映射都必须切到同一版本。推荐系统可以保留最近几个 tokenizer version，在训练、回放和线上服务中显式带上 version 字段。否则模型生成的 <span class="math-inline">$\langle a_1\rangle\langle b_3\rangle\langle c_2\rangle\langle d_9\rangle$</span> 在不同版本中可能对应不同 item，问题会非常隐蔽。</p>
 <p>我还会单独建立 codebook dashboard。核心指标包括每层 token 使用熵、top token 占比、空置 token 比例、每层 collision 数、按 H20/T80 分桶的 AQE、按类目的 code 分布，以及生成器输出中每层 token 的错误率。HypRQ-VAE 声称无需额外正则也能获得更均匀 token 分布，这一点在自己的数据上必须被持续验证。</p>
 <p>最后，长尾推荐要和业务约束一起看。双曲 tokenizer 可能让模型更愿意生成尾部 item，但尾部 item 也可能缺库存、缺质量分、缺审核状态或商业转化差。工程上可以把 HypRQ-VAE 作为提高候选覆盖率的召回层，再让后续 ranker 结合质量、时效、价格、库存和用户约束做最终决策。这样更符合它的定位：提供更长尾友好的 item vocabulary，而不是单独承担完整推荐链路。</p>
         </article>
