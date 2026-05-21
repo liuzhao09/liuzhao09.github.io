@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CFlower 解读 | liuzhao09</title>
+    <meta name="description" content="CFlower 用保守 SubTB 处理离线 LLM 推荐中的 unsupported flow mass 和数据支持约束。">
+    <link rel="stylesheet" href="../assets/css/site.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="nav" aria-label="主导航">
+        <a class="brand" href="../index.html"><span class="brand-mark">LZ</span><span>liuzhao09</span></a>
+        <div class="nav-links">
+          <a href="../index.html">首页</a>
+          <a href="../papers.html">论文库</a>
+        </div>
+      </nav>
+    </header>
+
+    <main class="page-shell paper-shell">
+      <section class="paper-hero">
+        <div>
+          <p class="breadcrumb"><a href="../papers.html">论文库</a> / CFlower</p>
+          <h1 class="paper-title">Improving LLM-Based Recommenders with Conservative Generative Flow Networks</h1>
+          <p class="paper-subtitle">在离线 LLM 推荐中给 GFlowNet 的 SubTB 目标加上保守约束，显式惩罚 unsupported forward flow mass，降低数据支持不足带来的分布偏移。</p>
+          <div class="tag-row"><span class="tag">手动精读</span><span class="tag">资料不足版</span><span class="tag">LLM4Rec</span><span class="tag">GFlowNet</span><span class="tag">Offline Rec</span></div>
+        </div>
+        <aside class="paper-meta" aria-label="论文信息">
+          <dl>
+            <div><dt>来源</dt><dd>ICML 2026 Poster</dd></div>
+            <div><dt>公开日期</dt><dd>2026-05-05</dd></div>
+            <div><dt>机构</dt><dd>未核验</dd></div>
+            <div><dt>PDF</dt><dd>未公开</dd></div>
+          </dl>
+        </aside>
+      </section>
+
+      <div class="paper-layout">
+        <aside class="paper-toc" aria-label="目录">
+          <p>目录</p>
+          <a class="toc-l1" href="#0">0. 导读</a>
+          <a class="toc-l1" href="#1">1. 背景与问题</a>
+          <a class="toc-l1" href="#2">2. 核心方法</a>
+          <a class="toc-l1" href="#3">3. 图表解读</a>
+          <a class="toc-l1" href="#4">4. 实验与结果</a>
+          <a class="toc-l1" href="#5">5. 我的理解</a>
+          <a class="toc-l1" href="#6">6. 工程启发与复现建议</a>
+          <a class="toc-l1" href="#7">7. 局限与风险</a>
+          <a class="toc-l1" href="#8">8. 后续跟进</a>
+        </aside>
+        <article class="markdown-body paper-content">
+          <h1 id="cflower-用保守生成流网络改进离线-llm-推荐">CFlower：用保守生成流网络改进离线 LLM 推荐</h1>
+          <blockquote>
+            <p>资料状态说明：这是“资料不足版”手动精读。2026-05-21 检索时，ICML 官方页面只公开了标题、作者、日期与摘要，没有提供 PDF、OpenReview、arXiv、代码或项目页链接。因此本文只把官方页面可核验的信息写成事实；涉及方法细节、实验设置、指标数值和图表的部分均按“待 PDF 公开后补全”处理，不伪造截图或表格。</p>
+          </blockquote>
+          <h2 id="0">0. 导读</h2>
+          <p>这篇论文的英文题目是《Improving LLM-Based Recommenders with Conservative Generative Flow Networks》，中文可以译为《用保守生成流网络改进基于 LLM 的推荐系统》。论文入口是 <a href="https://icml.cc/virtual/2026/poster/65235">ICML 2026 官方 poster 页面</a>。</p>
+          <p>作者为 Xuan Yu, Feng Niu, Rui Zhu, Yudong Zhang, Xu Wang, Yang Wang。官方页面给出的发布时间是 2026-05-05，修改时间是 2026-05-15，页面标注为 ICML 2026 Poster。作者机构未在页面列出，本轮无法核验；代码或项目链接也未公开。历史去重扫描未发现同题笔记或主页页面。</p>
+          <p>这篇论文关注的是一个很具体但很重要的问题：GFlowNet 近来被用于 LLM-based recommender，希望通过“按奖励成比例采样”改善推荐多样性、缓解 popularity bias；但很多 GFlowNet 训练目标默认环境可以在线探索，或者至少默认训练过程能够覆盖生成轨迹中的关键 token 转移。离线推荐并不满足这个前提。模型只能看到固定 logged dataset，用户-物品交互与文本化 item token 的支持集是局部的、稀疏的，训练实际上发生在一个由数据诱导出来的 token-prefix DAG 上。</p>
+          <p>论文摘要指出，如果把 Sub-Trajectory Balance 这类 GFlowNet 目标直接搬到离线 LLM 推荐里，会出现 non-identifiability：模型可以用很多等价但错误的方式解释已观测轨迹，并把概率质量任意分配到数据没有支持的区域。作者把这个失败拆成三个来源：flow overestimation、forward mass leakage 和 backward compensation。解决方案是 CFlower：在 SubTB 中加入保守项，显式惩罚 unsupported forward flow mass，并结合 dataset-constrained policy learning 与在数据诱导 DAG 上的 on-policy sampling，让离线训练更贴近数据支持范围。</p>
+          <p>我对这篇论文的第一判断是：它不是简单“把 GFlowNet 用在推荐上”，而是在问 GFlowNet 用到推荐以后最容易踩的离线学习问题。推荐系统大多数训练数据都是日志数据，天然存在曝光偏差、支持集不完整、长尾稀疏和反事实不可观测。如果一个生成式推荐模型在 token 层面学会了把概率质量放到训练日志没有覆盖的 prefix 或 item 表示上，那么它可能看起来有更高探索性，但实际上只是偏离了可验证的用户-物品分布。CFlower 的保守性就是针对这个风险设计的。</p>
+          <h2 id="1">1. 背景与问题</h2>
+          <p>LLM-based recommender 的一个常见路线是把推荐任务改写成文本生成任务。用户历史、候选物品或物品标识被序列化成 prompt 或 token 序列，LLM 输出 item identifier、推荐理由、排序结果或下一步交互。相比传统矩阵分解、序列推荐和双塔召回，LLM 推荐的优势在于可以利用物品文本、用户意图、自然语言解释和跨域知识。但它也继承了生成模型训练的基本问题：最大似然或监督微调会把模型推向训练数据中高频模式，容易放大热门物品、常见 token 和日志里的曝光偏差。</p>
+          <p>GFlowNet 被引入推荐，一个动机是让模型不是只追逐单个最大概率答案，而是学习一个与奖励成比例的分布。理想情况下，高奖励的多个推荐结果都能获得概率质量，模型既保持准确性，也保留多样性。这与推荐系统长期追求的 accuracy-diversity-fairness trade-off 很契合：用户不只需要最热门商品，也需要匹配长尾兴趣的候选；平台不只要点击率，也要控制曝光集中度。</p>
+          <p>问题在于，GFlowNet 的很多经典目标是在更理想的采样环境中提出的。模型可以沿状态图探索轨迹，观察终止状态奖励，再用 flow matching、trajectory balance 或 sub-trajectory balance 把奖励信号传播到中间状态。离线推荐恰恰不同。训练数据是固定日志，日志只覆盖了用户曾经看到、点击、购买或反馈过的一小部分物品；没有曝光的 item 并不等于低奖励，也不等于高奖励，只是不可观测。把这种日志数据转成 token-prefix DAG 后，只有一部分 prefix-transition 在数据里有支持。</p>
+          <p>这时直接优化 SubTB 会有识别问题。所谓 non-identifiability，可以理解为“仅凭已观测数据无法唯一确定那些未观测转移应该承载多少流量”。模型可能把已观测终点奖励解释成某些中间 prefix 的高 flow，但这些 prefix 后面连着大量数据没有支持的 token 转移；也可能通过 backward flow 的补偿，让训练目标在数学上看起来平衡，实际上 learned policy 已经偏离 dataset-implied policy。摘要把这些风险分成三类：flow overestimation 指对某些状态或转移的流量估计过高；forward mass leakage 指前向概率质量漏到 unsupported region；backward compensation 指反向项掩盖了前向泄漏。</p>
+          <p>对推荐系统来说，这个问题很现实。离线训练中的“没有观测到”经常混合了多种含义：用户没看到、系统没曝光、曝光了没点击、物品刚上线、日志采样丢失、过滤规则排除了、或者只是 tokenization 后没有形成某条 prefix。若训练目标不区分“低奖励”和“无支持”，模型就可能把探索性误当成泛化能力。CFlower 的核心价值，是把这种离线支持约束纳入 GFlowNet 目标，而不是只在实验报告中看最终准确率。</p>
+          <h2 id="2">2. 核心方法</h2>
+          <p>从摘要能确认的核心方法有四个关键词：conservative SubTB、unsupported forward flow mass penalty、dataset-constrained policy learning、on-policy sampling on the dataset-induced DAG。由于 PDF 未公开，本文不写具体公式，只做结构化解释。</p>
+          <p>第一，论文仍以 Sub-Trajectory Balance 为基础。SubTB 的直觉是，不一定只在完整轨迹终点处做平衡，也可以在轨迹的子片段上约束前向策略、反向策略、状态 flow 与奖励之间的关系。对于自回归 LLM 推荐，状态可以看作已经生成的 token prefix，动作是下一个 token，终止状态对应完整的 item identifier 或推荐输出。这样一来，推荐问题被表示成从空 prefix 到完整 item token 序列的生成过程。</p>
+          <p>第二，CFlower 在这个目标上加入保守性。摘要明确说它“explicitly penalizes unsupported forward flow mass”。直观地说，如果某个前向转移在固定日志诱导的 token-prefix DAG 上没有支持，模型不应该轻易给它分配大量概率质量。这个约束和 offline RL 中 conservative learning 的精神相近：在数据支持不足的区域不要过度乐观。推荐日志不是一个完整环境模拟器，模型无法通过离线数据验证 unsupported transition 的真实收益，所以更合理的做法是惩罚这类外推。</p>
+          <p>第三，CFlower 结合 dataset-constrained policy learning。这意味着策略学习被限制在数据诱导的可观测结构内，而不是让 LLM 在完整词表和任意 prefix 上自由扩散。这里的关键不是简单把非法 token mask 掉，因为推荐中的 token 表示可能有层级结构、共享 prefix 和多条可行路径；关键是把“哪些 prefix-transition 有数据支持”显式放进训练过程。这样可以让 learned policy 更接近 dataset-implied policy，降低离线分布偏移。</p>
+          <p>第四，CFlower 在 dataset-induced DAG 上做 on-policy sampling。这个点很有意思：离线训练并不代表完全不能采样，而是采样空间必须受日志诱导图约束。模型可以在可支持的 DAG 内生成轨迹，用当前策略收集训练片段，从而提升训练效率；但这种采样不会无边界地跑到日志没有覆盖的区域。它试图在“只看静态日志”与“完全在线探索”之间找一个折中。</p>
+          <p>从系统角度看，CFlower 的训练对象应该是一个 LLM 推荐策略，而不是传统推荐器中的打分函数。它关心 token-level transition 和 item-level reward 如何对齐，也关心离线数据对这些转移的支持情况。对于生成式推荐，semantic ID 或 item token 的每一步生成都会影响最终 item；若早期 prefix 已经偏向热门簇，后续再怎么调整也很难恢复长尾多样性。保守 SubTB 若能在 prefix 层面控制 unsupported flow，就可能比只在完整 item 上做重排更早地约束分布偏移。</p>
+          <p>目前无法核验的是：保守项的精确定义、unsupported transition 的判定方式、是否使用额外奖励模型、反向策略如何参数化、item tokenization 方案、以及 CFlower 与原 Flower 的实现关系。摘要足以说明方法方向，但不足以复现实验。</p>
+          <h2 id="3">3. 图表解读</h2>
+          <p>本轮没有图表截图。原因是官方页面没有公开 PDF，无法按论文顺序定位 Figure/Table，也无法按照项目要求裁剪 220-300 DPI 以上且不含 caption 的截图。为避免误导，这里不使用网页摘要自行绘制示意图，也不把方法猜测包装成论文原图。</p>
+          <p>待 PDF 公开后，最需要补的图表有四类。第一类是 problem illustration，用来解释 dataset-induced token-prefix DAG、partial support、unsupported regions 和 three sources of non-identifiability。第二类是 objective diagram 或 method pipeline，展示从 logged dataset 构建 token-prefix DAG，再在 DAG 内采样轨迹、计算保守损失、更新 LLM 策略的流程。第三类是主实验表，需要核验 CFlower 相比 prior GFlowNet、SFT baseline 的收益规模。第四类是 trade-off 和 ablation，用来观察保守强度变化下 accuracy、exposure、diversity、distribution matching 的曲线。</p>
+          <h2 id="4">4. 实验与结果</h2>
+          <p>可核验的实验信息只有摘要中的三点：实验使用三个 Amazon recommendation datasets；CFlower 改善 distributional matching；CFlower 相比 prior GFlowNet 和 SFT baselines 提供更强的 accuracy-exposure trade-off，并且可作为 downstream RL fine-tuning 更可靠的 reference policy。</p>
+          <p>这里的 distributional matching 应该是指 learned policy 的推荐分布更接近某个目标分布或数据隐含分布。对 GFlowNet 推荐来说，这个指标很关键，因为方法目标不是只最大化一个 item 的 reward，而是让多个候选按 reward 成比例获得采样概率。若分布匹配差，模型可能仍然集中推荐少数热门 item，或者在长尾区域产生无意义外推。</p>
+          <p>accuracy-exposure trade-off 是推荐系统里更业务化的指标组合。Accuracy 代表推荐命中、排序或下一物品预测能力；exposure 代表物品或群体获得展示概率的分布。传统 SFT 往往能拟合训练数据中高频 item，准确率尚可，但曝光集中度可能更高。GFlowNet 路线试图让奖励高的长尾 item 也有概率被采样。CFlower 的主张是：在离线数据约束下，如果不保守，GFlowNet 的“多样性”可能来自 unsupported leakage；加入保守约束后，模型能取得更可信的准确率与曝光折中。</p>
+          <p>摘要还提到 CFlower 可以作为 downstream RL fine-tuning 的 reference policy。这一点值得重视。很多推荐后训练会把 SFT model 当作 reference，再做 RL、DPO、PPO、GRPO 或其他偏好优化。如果 reference policy 本身已经因为离线训练外推而偏离数据支持，那么后续 RL 可能进一步放大错误分布。CFlower 作为更可靠 reference 的含义，是它可能在进入强化学习前提供一个更稳的初始分布，减少后续优化的偏移。</p>
+          <p>目前不能写的内容包括：Amazon 数据集具体名称、训练/验证/测试切分、item tokenization 方法、LLM backbone、reward 定义、baseline 名称、显著性检验、超参数、计算成本、以及具体数值提升。这些必须等待 PDF 或官方补充材料公开后补齐。</p>
+          <h2 id="5">5. 我的理解</h2>
+          <p>我认为这篇论文最值得看的点，是它把“离线推荐的支持集问题”带进了 LLM 生成式推荐和 GFlowNet 训练。很多 LLM4Rec 论文会把推荐任务语言化，然后借用 NLP 或 RLHF 中的训练目标；但推荐日志不是普通文本语料，它带有平台策略、曝光机制、候选池限制和用户反馈缺失。一个 token 序列没有出现在日志里，不能简单等价为“模型应该探索它”，也不能等价为“它一定不好”。这类不可观测性需要被训练目标显式处理。</p>
+          <p>CFlower 的 conservative 思路与 offline RL 的保守学习很一致。Offline RL 的经验是，在数据外动作上过度乐观会毁掉策略；离线生成式推荐也一样，在数据外 prefix-transition 上过度分配概率，会让模型生成看似合理但缺乏日志支持的 item token。区别在于，LLM 推荐的动作空间是 token 级的，而且一个 item 由多步 token 组成。错误可能不是发生在最终 item，而是发生在早期 prefix 的流量分配上。CFlower 从 token-prefix DAG 入手，说明作者把问题建模到了合适的粒度。</p>
+          <p>这篇论文也补上了 GFlowNet 推荐路线中一个容易被忽略的问题：多样性不能脱离支持约束。推荐系统当然需要多样性和长尾曝光，但不是所有不常见输出都是有价值的多样性。真正有价值的是“在用户和数据支持下的多样性”，而不是模型在无支持区域的随机扩散。CFlower 如果实验成立，就说明保守性不是 diversity 的敌人，而是让 diversity 更可信的边界条件。</p>
+          <p>我还会把它放在“reference policy 质量”这个角度理解。现在很多 LLM 后训练方法都依赖一个 reference policy 来控制 KL、稳定训练或保留基础能力。在推荐场景里，reference policy 不只是语言模型，它还承载了用户-物品分布、曝光结构和平台目标。如果 reference policy 已经热门偏置严重，后续 RL 可能只是在偏置上继续优化；如果 reference policy 为了追求 GFlowNet 多样性而外推严重，后续 RL 又可能变得不稳定。一个 conservative GFlowNet reference 可能是更好的起点。</p>
+          <p>不过，在没有 PDF 的情况下，我对这篇工作的判断仍然要保守。摘要说它 formalizes failure，并识别三类 non-identifiability，但理论假设、证明边界和实际训练目标还没看到。保守项是否会过度惩罚冷门 item？unsupported forward mass 与真正值得探索的 long-tail item 如何区分？如果日志本身有强曝光偏差，限制在 dataset-induced DAG 内是否会进一步固化历史偏差？这些问题都要等全文才能回答。</p>
+          <h2 id="6">6. 工程启发与复现建议</h2>
+          <p>如果要在工程里尝试 CFlower 类思路，我建议先不要直接微调大 LLM，而是先搭一个可观测的小型生成式推荐实验。第一步，把 item 编码成 token 序列或 semantic ID，基于训练日志构建 token-prefix DAG，统计每个 prefix 后续出现过哪些 token。第二步，用一个小模型或轻量 LM 做 SFT baseline，确认它在准确率和曝光分布上的偏置。第三步，实现受 DAG 约束的采样和 unsupported transition 检测，观察模型生成时有多少概率质量流向训练数据没有支持的 prefix。</p>
+          <p>复现 CFlower 的关键不一定是公式本身，而是日志支持集的工程表示。需要能快速回答几个问题：某个 prefix 是否出现过？某个 prefix-token transition 是否出现过？这个 transition 的支持强度是多少？不同用户、不同品类或不同时间段是否共享同一个 DAG？如果 item tokenization 采用 semantic ID，DAG 结构会带有层级语义；如果采用文本标题 token，DAG 可能过大且噪声更高。不同 tokenization 会显著影响保守项的行为。</p>
+          <p>训练时还要区分三类“不支持”。第一类是结构上不可能的 token，例如不对应任何合法 item ID；这类可以直接 mask。第二类是数据中未出现但语义上可能合法的长尾转移；这类如果一律强惩罚，可能会伤害探索。第三类是由于曝光策略导致缺失的反事实候选；这类需要用曝光建模、IPS、counterfactual evaluation 或额外召回系统辅助判断。CFlower 摘要没有说明如何细分这些情况，工程落地时必须谨慎。</p>
+          <p>评估也不能只看 hit rate 或 NDCG。至少要同时看 item exposure Gini、long-tail coverage、popularity bucket performance、distributional distance、unsupported generation rate 和线上可解释样例。若一个模型准确率提升但 unsupported generation rate 也上升，说明它可能在不可控区域冒进；若曝光更均匀但准确率大幅下降，说明保守项或奖励分布需要重调。CFlower 的价值应体现在更好的折中，而不是单指标胜出。</p>
+          <p>对于后续 RL fine-tuning，建议把 CFlower policy 与 SFT policy 都作为 reference 做对比。观察同样的 RL 奖励下，哪一个 reference 更稳定、KL 更小、曝光更合理、负反馈更少。若 CFlower 真能提供更可靠的 reference，它的收益可能不只来自直接推荐结果，而来自提升整个推荐后训练管线的稳定性。</p>
+          <h2 id="7">7. 局限与风险</h2>
+          <ol>
+            <li>PDF 未公开，当前笔记无法核验完整方法公式、理论证明、实验设置、数据集名称、表格数值和图表。</li>
+            <li>作者机构和代码状态未核验，无法判断实现是否可复现，也无法评估计算成本。</li>
+            <li>保守项可能带来过度保守风险。如果 unsupported transition 中包含真实长尾机会，强惩罚可能降低探索和新物品曝光。</li>
+            <li>Dataset-induced DAG 继承日志偏差。若历史曝光本身严重偏向热门物品，只在 DAG 内约束策略可能仍会固化平台原有偏差。</li>
+            <li>Tokenization 对结果影响可能很大。semantic ID、文本标题 token、类别层级 token 会形成完全不同的 prefix DAG，保守项的有效性需要跨表示验证。</li>
+            <li>摘要只提到三个 Amazon 数据集，真实推荐系统还会面对跨域、多模态、冷启动、实时库存、业务规则和安全过滤，离线结果不等于线上收益。</li>
+            <li>作为 downstream RL reference policy 的说法很有潜力，但需要看 RL fine-tuning 的具体任务、奖励定义和稳定性证据。</li>
+          </ol>
+          <h2 id="8">8. 后续跟进</h2>
+          <ol>
+            <li>继续跟踪 ICML 页面、PMLR、OpenReview、arXiv 和作者主页，一旦 PDF 公开，补齐本地 PDF、图表截图和完整实验笔记。</li>
+            <li>重点核验 conservative SubTB 的数学定义，尤其是 unsupported forward flow mass 如何计算，以及是否有可调保守系数。</li>
+            <li>核验三类 non-identifiability 的形式化证明：flow overestimation、forward mass leakage、backward compensation 是否分别对应可观测实验现象。</li>
+            <li>核验三个 Amazon 数据集、baseline、指标和提升幅度，尤其看 accuracy-exposure trade-off 是否在所有数据集上稳定成立。</li>
+            <li>查找是否公开 CFlower 代码；若公开，优先复现实验中的 DAG 构建、sampling 和 policy learning 部分。</li>
+            <li>与 SIGIR 2025 的 Flow-guided fine-tuning recommender 路线做对照，区分 Flower 解决 popularity bias 的机制与 CFlower 解决 offline support 的机制。</li>
+            <li>如果要做内部复现，先在小规模 semantic ID 推荐数据上记录 unsupported generation rate，再比较 SFT、普通 GFlowNet 和 conservative GFlowNet。</li>
+          </ol>
+        </article>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="page-shell">
+        <span>© 2026 liuzhao09. Paper notes.</span>
+        <a class="text-link" href="../papers.html">返回论文库</a>
+      </div>
+    </footer>
+  </body>
+</html>
