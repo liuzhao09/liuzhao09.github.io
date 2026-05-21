@@ -6,6 +6,10 @@
     <title>SynGR 解读 | liuzhao09</title>
     <meta name="description" content="SynGR 通过 saliency-aware masking 和协同对比学习打断多模态生成式推荐中的单模态捷径。">
     <link rel="stylesheet" href="../assets/css/site.css">
+    <script>
+      window.MathJax = { tex: { inlineMath: [['$', '$'], ['\\(', '\\)']], displayMath: [['$$', '$$'], ['\\[', '\\]']] }, svg: { fontCache: 'global' } };
+    </script>
+    <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
   </head>
   <body>
     <header class="site-header">
@@ -65,27 +69,55 @@
 <p>这篇文章和 MACRec、MQL4GRec 的关系也值得区分。MACRec 关注多 aspect quantization 和 cross-modal alignment，希望构造更好的多模态 semantic ID；MQL4GRec 关注把多模态信息转成 quantitative language，供生成模型使用。SynGR 不主要改 item tokenizer，而是在生成阶段加入约束：如果模型总是靠 dominant modality 走捷径，就主动打断它，让它从另一个模态和跨模态组合中恢复目标。换句话说，SynGR 更像一个训练范式或正则化框架，可以和已有的多模态离散化路线组合。</p>
 <h2 id="3">核心方法</h2>
 <h3 id="1-pid-alignment">1. 用 PID 解释为什么 alignment 不够</h3>
-<p>论文先给出形式化设定。给定一个用户历史序列 H，其中每个 item 都同时有视觉 token 和文本 token；生成式推荐要做的是：在视觉历史和文本历史都已知的条件下，生成下一个 item 的离散语义标识符 Y。信息论视角下，这等价于让多模态历史尽可能多地提供“对目标 item 有用的信息”。</p>
-<p>基于 Partial Information Decomposition，这部分任务相关信息可以被拆成四类：</p>
-<ul><li>R：视觉和文本都能提供的冗余信息，例如两者都能说明商品大类。</li><li>Uv：视觉单独提供的独有信息，例如纹理、版型、材质观感。</li><li>Ut：文本单独提供的独有信息，例如品牌名、价格、明确属性。</li><li>S：只有联合两种模态才出现的协同信息，例如“昂贵品牌 + 特定视觉风格”共同指向的奢侈定位。</li></ul>
-<p>论文指出，很多现有目标实际覆盖的是：只看视觉时主要学到 R 和 Uv；只看文本时主要学到 R 和 Ut；做跨模态 alignment 时主要强化 R。也就是说，这些目标能学到冗余信息和单模态独有信息，却没有直接逼模型学习 S。</p>
+<p>论文先给出形式化设定。给定用户历史序列 <span class="math-inline">$H=\{x_1,x_2,\ldots,x_L\}$</span>，每个 item 有视觉 token <span class="math-inline">$x_{v,i}$</span> 和文本 token <span class="math-inline">$x_{t,i}$</span>。生成式推荐要建模的是 <span class="math-inline">$P(Y\mid X_v,X_t)$</span>，其中 <span class="math-inline">$Y$</span> 是下一个 item 的离散语义标识符。信息论视角下，模型希望最大化历史多模态输入对目标 <span class="math-inline">$Y$</span> 的任务相关信息，即 <span class="math-inline">$I(X_v,X_t;Y)$</span>。</p>
+<p>基于 Partial Information Decomposition，联合互信息可以被拆成：</p>
+<div class="math-display">$$
+I(X_v,X_t;Y)=R+S+U_v+U_t.
+$$</div>
+<p>其中 <span class="math-inline">$R$</span> 是两种模态都能提供的冗余信息，<span class="math-inline">$U_v$</span> 和 <span class="math-inline">$U_t$</span> 是视觉或文本单独提供的独有信息，<span class="math-inline">$S$</span> 是只有联合两种模态才出现的协同信息。论文指出，很多现有目标实际覆盖的是：</p>
+<div class="math-display">$$
+\begin{aligned}
+I(X_v;Y)&=R+U_v,\\
+I(X_t;Y)&=R+U_t,\\
+I(X_v;X_t)&=R.
+\end{aligned}
+$$</div>
 <p>也就是说，同模态生成目标会强化单模态信息，跨模态 alignment 会强化冗余信息，但二者都没有直接最大化 S。更重要的是，alignment 如果做得过强，可能还会把两种模态压到共享语义空间里，进一步削弱那些“不一致但互补”的信息。推荐里的高阶偏好经常就在这种互补关系中，比如“阿根廷球衣 + 金色球鞋 + 梅西海报”共同指向的是梅西世界杯冠军纪念品，而不是单纯的足球或球衣。</p>
 <h3 id="2">2. 协同视图：保留联合预测能力，遮蔽单模态捷径</h3>
-<p>论文定义了 synergy-oriented transformation。目标是构造一个协同视图 bX，它满足两点：一是 Joint Sufficiency，即 bX 仍然保留对目标 Y 的联合预测能力；二是 Unimodal Obscuration，即 bX 不应大量泄漏任何单一模态可恢复的信息。直观地说，模型既不能丢掉推荐任务所需的信息，也不能轻松从某一个强模态里直接读答案。</p>
-<p>这个理论目标落到训练实践，就是两个动作：先构造能打断单模态 shortcut 的 masked view，再用对比学习把该 view 拉近原始多模态 view、推远单模态 shortcut view。这样学到的协同表示仍然能预测目标 item，但它的预测能力应更多来自跨模态交互，而不是某一模态的独有或冗余线索。</p>
+<p>论文定义了 synergy-oriented transformation。目标是构造一个协同视图 <span class="math-inline">$\hat{X}=\phi(X_v,X_t)$</span>，它满足两点：一是 Joint Sufficiency，即 <span class="math-inline">$\hat{X}$</span> 仍然保留对目标 <span class="math-inline">$Y$</span> 的联合预测能力；二是 Unimodal Obscuration，即 <span class="math-inline">$\hat{X}$</span> 不应大量泄漏任何单一模态可恢复的信息。论文形式化写成：</p>
+<div class="math-display">$$
+I(\hat{X};Y)\approx I(X_v,X_t;Y),
+$$</div>
+<div class="math-display">$$
+I(\hat{X};X_v)\le \epsilon I(X_v;Y),\qquad
+I(\hat{X};X_t)\le \epsilon I(X_t;Y).
+$$</div>
+<p>直观地说，模型既不能丢掉推荐任务所需的信息，也不能轻松从某一个强模态里直接读答案。</p>
+<p>这个理论目标落到训练实践，就是两个动作：先构造能打断单模态 shortcut 的 masked view，再用对比学习把该 view 拉近原始多模态 view、推远单模态 shortcut view。这样学到的表示 <span class="math-inline">$Z_{\mathrm{syn}}$</span> 仍然能预测目标 item，但它的预测能力应更多来自跨模态交互，而不是某一模态的独有或冗余线索。</p>
 <h3 id="3-tokenization-rq-vae">3. 多模态 tokenization：沿用 RQ-VAE 离散化</h3>
 <p>SynGR 仍然需要把连续的文本和视觉特征转成生成模型可处理的离散 token。论文采用 RQ-VAE：文本特征可由 LLaMA 等冻结文本编码器抽取，视觉特征可由 ViT 等冻结视觉编码器抽取，然后分别投影到 latent vector。每个 latent vector 经过 D 层 residual quantization，逐层选择最近的 codeword，并更新 residual。最终一个 item 会得到多层级的文本 code 和视觉 code。</p>
-<p>为了让一个生成模型统一处理两类 token，论文构造了共享词表，但保留模态身份：文本 token 使用小写前缀，视觉 token 使用大写前缀。假设量化深度为 3，一个 item 可能被表示为 a1、b2、c3、A1、B2、C3 这样的混合 token 序列。小写 token 对应文本侧，大写 token 对应视觉侧。这类设计的作用是既把多模态内容转成统一序列，又不抹掉视觉和文本来自不同模态的事实。</p>
+<p>为了让一个生成模型统一处理两类 token，论文构造了共享词表，但保留模态身份：文本 token 使用小写前缀，视觉 token 使用大写前缀。假设量化深度为 3，一个 item 可能被表示为 <span class="math-inline">$[a_1,b_2,c_3,A_1,B_2,C_3]$</span>。这类设计的作用是既把多模态内容转成统一序列，又不抹掉视觉和文本来自不同模态的事实。</p>
 <h3 id="4-saliency-aware-masking-mask-dominant-modality-token">4. Saliency-aware masking：只 mask dominant modality 的高显著 token</h3>
 <p>随机 mask 可能破坏有用信息，却未必击中模型真正依赖的 shortcut。SynGR 因此使用模型内部 attention 来诊断当前哪种模态更占优势。具体做法是抽取最后一层 encoder 的 self-attention map，对每个 token 计算其被所有 query 和所有 head 关注的总 attention mass，再按 token 数归一化得到 saliency score。然后分别对文本 token 集合和视觉 token 集合求平均显著性，显著性更高的模态被认定为 dominant modality。</p>
-<p>找到 dominant modality 后，SynGR 只在该模态内部选择 top-r 最显著 token 替换成 MASK token。这个设计有两个好处。第一，它有针对性地打断“最容易降低损失”的路径，而不是平均削弱所有输入。第二，它保留了另一模态以及 dominant modality 中非最高显著的部分，因此不至于把联合预测能力完全破坏掉。论文的理论设定里，这一步对应 Unimodal Obscuration；工程上，它相当于一个动态 hard augmentation。</p>
+<p>找到 dominant modality 后，SynGR 只在该模态内部选择 top-<span class="math-inline">$r$</span> 最显著 token 替换成 <span class="math-inline">$[\mathrm{MASK}]$</span>。这个设计有两个好处。第一，它有针对性地打断“最容易降低损失”的路径，而不是平均削弱所有输入。第二，它保留了另一模态以及 dominant modality 中非最高显著的部分，因此不至于把联合预测能力完全破坏掉。论文的理论设定里，这一步对应 Unimodal Obscuration；工程上，它相当于一个动态 hard augmentation。</p>
 <h3 id="5-synergistic-contrastive-learning">5. Synergistic contrastive learning：原始视图为正，单模态视图为负</h3>
-<p>被 mask 的序列只是 anchor。SynGR 还构造两个参照：原始多模态序列作为 positive view，单模态序列集合作为 negative view。三种序列经过共享参数的 Transformer blocks 后，用 mask-aware mean pooling 得到三个序列级表示：masked anchor 表示、原始多模态表示和单模态 shortcut 表示。随后使用 InfoNCE 形式的对比损失：拉近 masked anchor 与原始多模态表示，拉远 masked anchor 与单模态 shortcut 表示。</p>
-<p>这个负样本设计比普通 in-batch negative 更贴合问题。普通负样本通常只是另一个用户或另一个 item 序列，未必能惩罚模型依赖单模态；而单模态 view 本身就是“只看文本”或“只看视觉”的 shortcut 表示。如果 anchor 在 latent space 里仍然贴近单模态表示，说明模型没有真正从跨模态组合里恢复信息。把单模态表示作为 hard negative，才能直接约束 synergy-oriented representation。</p>
-<p>最终训练目标由两部分组成：主任务仍是 next-token 生成损失，负责预测目标 item identifier；辅助项是协同对比损失，负责把 masked anchor 从单模态 shortcut 中拉开。两者加权相加，其中对比损失只作为正则项，不替代生成目标。</p>
-<p>其中，生成损失针对原始、masked、unimodal 三类视图计算 next-token negative log-likelihood；协同对比损失则鼓励模型远离单模态捷径。推理阶段不需要对比损失，也不需要额外计算协同正则；模型只按常规方式给定用户历史，通过 beam search 生成目标 item identifier。因此论文声称 SynGR 的推理复杂度与 vanilla Transformer backbone 保持一致，训练阶段只是增加常数级多视图开销。</p>
+<p>被 mask 的序列只是 anchor。SynGR 还构造两个参照：原始多模态序列 <span class="math-inline">$H_{\mathrm{ori}}$</span> 作为 positive view，单模态序列集合 <span class="math-inline">$H_{\mathrm{uni}}$</span> 作为 negative view。三种序列经过共享参数的 Transformer blocks 后，用 mask-aware mean pooling 得到序列级表示 <span class="math-inline">$Z_{\mathrm{mask}}$</span>、<span class="math-inline">$Z_{\mathrm{ori}}$</span> 和 <span class="math-inline">$Z_{\mathrm{uni}}$</span>。随后使用 InfoNCE 形式的对比损失：拉近 <span class="math-inline">$Z_{\mathrm{mask}}$</span> 与 <span class="math-inline">$Z_{\mathrm{ori}}$</span>，拉远 <span class="math-inline">$Z_{\mathrm{mask}}$</span> 与 <span class="math-inline">$Z_{\mathrm{uni}}$</span>。</p>
+<p>这个负样本设计比普通 in-batch negative 更贴合问题。普通负样本通常只是另一个用户或另一个 item 序列，未必能惩罚模型依赖单模态；而 <span class="math-inline">$H_{\mathrm{uni}}$</span> 本身就是“只看文本”或“只看视觉”的 shortcut 表示。如果 anchor 在 latent space 里仍然贴近单模态表示，说明模型没有真正从跨模态组合里恢复信息。把单模态表示作为 hard negative，才能直接约束 synergy-oriented representation。</p>
+<p>协同对比损失写成：</p>
+<div class="math-display">$$
+\mathcal{L}_{\mathrm{Syn}}
+=-\log
+\frac{\exp(\mathrm{sim}(Z_{\mathrm{mask}},Z_{\mathrm{ori}})/\tau)}
+{\exp(\mathrm{sim}(Z_{\mathrm{mask}},Z_{\mathrm{ori}})/\tau)+
+\exp(\mathrm{sim}(Z_{\mathrm{mask}},Z_{\mathrm{uni}})/\tau)}.
+$$</div>
+<p>最终训练目标是生成损失加协同对比损失：</p>
+<div class="math-display">$$
+\mathcal{L}=\mathcal{L}_{\mathrm{Gen}}+\lambda\mathcal{L}_{\mathrm{Syn}}.
+$$</div>
+<p>其中 <span class="math-inline">$\mathcal{L}_{\mathrm{Gen}}$</span> 是针对原始、masked、unimodal 三类视图的 next-token negative log-likelihood，<span class="math-inline">$\mathcal{L}_{\mathrm{Syn}}$</span> 是协同对比正则。推理阶段不需要对比损失，也不需要额外计算协同正则；模型只按常规方式给定用户历史，通过 beam search 生成目标 item identifier。因此论文声称 SynGR 的推理复杂度与 vanilla Transformer backbone 保持一致，训练阶段只是增加常数级多视图开销。</p>
 <p><img alt="Figure 2：SynGR 框架概览" src="../assets/images/syngr/2.jpg"></p>
-<p>图 2 把方法串起来看最清楚。左侧是 tokenization：文本和图像分别经过量化器变成带大小写前缀的统一字典 token。右侧是 generation：模型先用 attention map 判断 dominant modality，并做 top-r masking；然后并行处理 original、masked 和 unimodal 三种视图，得到原始多模态表示、masked anchor 表示和单模态表示；最后用生成头预测 target item，同时用对比学习把 masked anchor 拉向原始多模态语义、远离单模态 shortcut。这个图也说明 SynGR 并不是单独新增一个复杂检索模块，而是嵌在生成训练里的表示约束。</p>
+<p>图 2 把方法串起来看最清楚。左侧是 tokenization：文本和图像分别经过量化器变成带大小写前缀的统一字典 token。右侧是 generation：模型先用 attention map 判断 dominant modality，并做 top-<span class="math-inline">$r$</span> masking；然后并行处理 original、masked 和 unimodal 三种视图，得到 <span class="math-inline">$Z_{\mathrm{ori}}$</span>、<span class="math-inline">$Z_{\mathrm{mask}}$</span>、<span class="math-inline">$Z_{\mathrm{uni}}$</span>；最后用生成头预测 target item，同时用对比学习把 masked anchor 拉向原始多模态语义、远离单模态 shortcut。这个图也说明 SynGR 并不是单独新增一个复杂检索模块，而是嵌在生成训练里的表示约束。</p>
 <h2 id="4">图表解读</h2>
 <h3 id="figure-1">Figure 1：问题不是多模态缺失，而是协同信息没有被释放</h3>
 <p>图 1 的三部分分别对应动机、证据和现象。信息分解图告诉我们，多模态推荐不能只看 shared representation，因为 shared 部分更接近冗余 R；PID 圆环图展示现有方法中 S 的比例很低；attention 雷达图则给出 shortcut 的直接迹象：文本模态经常拿到更高 attention。我的理解是，这里最关键的不是 7.5% 和 29.1% 的绝对值，而是论文把“多模态融合不充分”从经验描述转成了可诊断的训练偏置：当生成目标给模型提供了一条损失下降最快的文本路径，视觉和文本的高阶交互就会被优化过程自然压低。</p>
@@ -99,7 +131,7 @@
 <p>图 3 对比 SynGR 和 MACRec 在 Arts 与 Instruments 上的训练时间、推理时间和 loss 曲线。论文报告 SynGR 训练时间在 Arts 上从 26.2 小时降到 20.1 小时，在 Instruments 上从 25.1 小时降到 19.5 小时，分别约 23% 和 22% 的减少；推理时间从 156.8 秒降到 147.3 秒、从 128.2 秒降到 123.1 秒，分别约 6% 和 4% 的减少。收敛曲线也显示 SynGR 更早到达稳定点。这个结果有一定说服力，因为 SynGR 虽然增加了多视图训练和对比损失，但没有像 MACRec 那样引入更重的多 aspect alignment 任务；其核心计算复用已有 attention map，推理阶段不新增模块。</p>
 <h3 id="figure-5">Figure 5：三个模块都不是装饰项</h3>
 <p><img alt="Figure 5：关键模块消融" src="../assets/images/syngr/5.jpg"></p>
-<p>图 5 做了三种消融：w/o SM 用随机 mask 替换 saliency-based masking；w/o UN 用普通 batch 内随机负样本替换 unimodal shortcut negative；w/o SCL 移除 synergistic contrastive learning。Arts 和 Games 上完整 SynGR 都最好。这个图说明收益不是单纯来自“多做了一次数据增强”或“加了一个对比损失”，而是来自三者组合：mask 必须打在 dominant shortcut 上，负样本必须是单模态 shortcut，目标函数必须明确把 anchor 拉向原始多模态、推离单模态。</p>
+<p>图 5 做了三种消融：<span class="math-inline">$w/o\ SM$</span> 用随机 mask 替换 saliency-based masking；<span class="math-inline">$w/o\ UN$</span> 用普通 batch 内随机负样本替换 unimodal shortcut negative；<span class="math-inline">$w/o\ SCL$</span> 移除 synergistic contrastive learning。Arts 和 Games 上完整 SynGR 都最好。这个图说明收益不是单纯来自“多做了一次数据增强”或“加了一个对比损失”，而是来自三者组合：mask 必须打在 dominant shortcut 上，负样本必须是单模态 shortcut，目标函数必须明确把 anchor 拉向原始多模态、推离单模态。</p>
 <h3 id="figure-6">Figure 6：世界杯案例展示“协同意图”而非粗粒度相似</h3>
 <p><img alt="Figure 6：SynGR 与 MACRec 的定性案例" src="../assets/images/syngr/6.jpg"></p>
 <p>图 6 的用户历史包括 2022 世界杯比赛用球、阿根廷球衣、金色球鞋和梅西世界杯海报。真实下一个 item 是 Messi World Cup Winner Poster。MACRec 把 Molten match ball 和 Cristiano Ronaldo jersey 排在前面，说明它抓到了足球、球衣这类粗粒度视觉或文本相似；SynGR 把 GT 排在第一，更像是识别到“梅西 + 阿根廷 + 世界杯 + 海报/纪念品”的联合语义。这个案例很好地解释了论文所谓 synergy：推荐目标不是某个单独 token 的匹配，而是多个模态线索共同构成的用户意图。</p>
@@ -108,8 +140,8 @@
 <p>主结果方面，SynGR 全指标领先。相对传统序列推荐模型，生成式方法整体更强，尤其是 TIGER、MQL4GRec、MACRec 这类 item tokenization 加 Transformer 生成的路线；但 SynGR 在强 baseline MACRec 之上仍有稳定提升，说明“释放协同信息”不是替代多模态 quantization，而是在已有多模态生成路线上的增益项。表 1 中 Instruments 上 HR@10 从最强 baseline 的 0.1375 提到 0.1768，这个幅度明显超过 Arts 和 Games，可能反映该类目中视觉外观、文本属性和功能用途的组合更决定用户下一步交互。</p>
 <p>效率实验同样有意思。很多正则化方法提升效果但增加训练和推理成本，SynGR 的优点是推理阶段没有额外 overhead。训练阶段虽然要处理三种视图，但论文称这些视图可以在 batch 内并行，并且 saliency analysis 复用 forward pass 已经产生的 attention map。因此它在 MACRec 这种多 aspect alignment 框架面前反而更快。需要注意的是，论文的效率对比只报告了在 6 张 NVIDIA GeForce RTX 4090 上的设定，迁移到不同硬件、不同 batch size 或更大 catalog 时，绝对时间不一定一致，但“推理不新增模块”的结论较稳。</p>
 <p>消融实验回答了三个关键疑问。第一，如果把 saliency mask 换成随机 mask，性能下降，说明不是任意扰动都能释放协同，必须定位 dominant modality 的高显著 token。第二，如果把 unimodal shortcut negative 换成普通随机负样本，性能下降，说明负样本需要针对 shortcut 设计。第三，如果移除对比学习，仅靠多视图生成损失，性能仍会下降，说明生成目标本身不足以惩罚单模态捷径。这三点共同支持论文核心假设：协同信息不会因为多模态 token 被拼接进序列就自然出现，需要训练目标显式施压。</p>
-<p>参数敏感性方面，论文研究 mask ratio、对比损失权重和温度系数。mask ratio 在 0.2 到 0.4 之间较好，过小打不断 shortcut，过大又会删除必要语义；对比损失权重在小范围内有效，过大会让对比正则干扰主生成任务；温度系数在 0.05 到 0.07 附近表现较稳。这些结论对复现很有用：SynGR 的收益依赖适度干预，而不是越强越好。</p>
-<p>实现细节方面，论文附录说明采用两阶段训练。预训练使用六个 Amazon 类目 Pet Supplies、Cell Phones、Automotive、Tools、Toys 和 Sports，总计约 7.1M 交互、884,918 用户、255,181 item；下游再 fine-tune 到目标类目。生成 backbone 使用 T5，encoder 和 decoder 都是 4 层 Transformer、6 个 self-attention heads、每层 hidden dimension 为 64；文本特征使用 LLaMA，视觉特征使用 ViT-L/14；RQ-VAE codebook size 为 256，量化层数为 4；batch size 固定 1024，温度系数设为 0.07，训练 200 epochs。代码仓库已经公开，但是否包含可直接复现实验所需的全部数据处理产物和 checkpoint 需要进一步本地跑通后确认。</p>
+<p>参数敏感性方面，论文研究 mask ratio <span class="math-inline">$r$</span>、对比损失权重 <span class="math-inline">$\lambda$</span> 和温度 <span class="math-inline">$\tau$</span>。<span class="math-inline">$r$</span> 在 0.2 到 0.4 之间较好，过小打不断 shortcut，过大又会删除必要语义；<span class="math-inline">$\lambda$</span> 在小范围内有效，过大会让对比正则干扰主生成任务；<span class="math-inline">$\tau$</span> 在 0.05 到 0.07 附近表现较稳。这些结论对复现很有用：SynGR 的收益依赖适度干预，而不是越强越好。</p>
+<p>实现细节方面，论文附录说明采用两阶段训练。预训练使用六个 Amazon 类目 Pet Supplies、Cell Phones、Automotive、Tools、Toys 和 Sports，总计约 7.1M 交互、884,918 用户、255,181 item；下游再 fine-tune 到目标类目。生成 backbone 使用 T5，encoder 和 decoder 都是 4 层 Transformer、6 个 self-attention heads、每层 hidden dimension 为 64；文本特征使用 LLaMA，视觉特征使用 ViT-L/14；RQ-VAE codebook size 为 256，量化层数为 4；batch size 固定 1024，温度 <span class="math-inline">$\tau$</span> 为 0.07，训练 200 epochs。代码仓库已经公开，但是否包含可直接复现实验所需的全部数据处理产物和 checkpoint 需要进一步本地跑通后确认。</p>
 <h2 id="6">我的理解</h2>
 <p>这篇论文最有价值的地方，是把多模态推荐中的“融合”拆得更细。很多工作默认视觉和文本越对齐越好，但推荐任务并不总是需要两个模态说同一件事。冗余信息可以提高稳健性，单模态信息可以提供强判别线索，但真正体现用户偏好的常常是组合语义。例如用户买了某个品牌、某种风格、某类视觉造型、某个价格带商品，下一步偏好可能不是这些属性的任意一个，而是它们的交叉区域。SynGR 用 synergy 这个词，把“交叉区域里的偏好”变成了可优化对象。</p>
 <p>从训练动力学看，SynGR 像是在对生成模型做 curriculum 式的反捷径训练。普通 next-token prediction 会奖励最短路径：哪个 token 最能预测目标，就最依赖哪个 token。Saliency-aware masking 则把这条最短路径局部封掉，让模型必须绕路。绕路本身未必一定更好，但如果正样本仍是完整多模态语义，负样本又是单模态 shortcut，那么模型会被引导到“既能接近完整语义，又不能退回单模态”的区域。这个区域正是论文希望近似的协同表示。</p>
@@ -120,7 +152,7 @@
 <p>第一层是数据和 item 内容。SynGR 依赖每个 item 至少有稳定的文本描述和图片。如果图片缺失、文本质量差或两者不一致，saliency mask 可能会变成噪声放大器。论文的数据处理要求每个 item 对应一个 image 和一个 text description，这一点在工业数据里并不自动成立。需要先做 item 内容清洗、图片去重、文本规范化和缺失模态处理。</p>
 <p>第二层是 tokenizer。论文使用 LLaMA 文本特征、ViT-L/14 视觉特征和 RQ-VAE 多层量化。复现时需要确认 codebook 是否真的学到有区分度的层级 token。如果 RQ-VAE collapse，后面的 SynGR 只能在坏 token 上学习。建议先单独评估 tokenization：看 item code 的重复率、类目聚合度、同一用户历史中 code 的多样性，以及 text/vision code 是否过度偏向热门类目。</p>
 <p>第三层是 saliency mask。实现中要注意 attention map 的来源、维度和归一化方式。论文用最后一层 encoder attention，对每个 token 汇总所有 query 和 head 的 attention mass；再对文本和视觉 token 分别求平均显著性。如果模型 backbone 或 prompt 格式变化，token 位置、special token、padding token 都要正确排除，否则 dominant modality 诊断会偏。</p>
-<p>第四层是对比损失。masked anchor、原始多模态表示和单模态表示的 pooling 需要 mask-aware，不能让 PAD token 进入平均。单模态 negative 的构造也要和任务保持一致：文本子任务用文本 unimodal shortcut，视觉子任务用视觉 unimodal shortcut。对比损失权重不宜过大，论文搜索范围是 0.001 到 0.009，说明它是辅助正则而不是主目标。上线或大规模训练时，建议先从较小对比损失权重和 0.2 到 0.4 的 mask ratio 开始。</p>
+<p>第四层是对比损失。<span class="math-inline">$Z_{\mathrm{mask}}$</span>、<span class="math-inline">$Z_{\mathrm{ori}}$</span>、<span class="math-inline">$Z_{\mathrm{uni}}$</span> 的 pooling 需要 mask-aware，不能让 <span class="math-inline">$[\mathrm{PAD}]$</span> 进入平均。单模态 negative 的构造也要和任务保持一致：文本子任务用文本 unimodal shortcut，视觉子任务用视觉 unimodal shortcut。<span class="math-inline">$\lambda$</span> 不宜过大，论文搜索范围是 0.001 到 0.009，说明它是辅助正则而不是主目标。上线或大规模训练时，建议先从较小 <span class="math-inline">$\lambda$</span> 和 0.2 到 0.4 的 mask ratio 开始。</p>
 <p>从工程收益看，SynGR 的可取之处是推理成本不增加。训练期的 masked view 和 contrastive view 可以被视为模型鲁棒性和协同偏好的蒸馏过程；部署时仍然只需要常规生成。对召回链路而言，这比增加在线 cross-modal reasoning 模块更容易接受。真正的风险在训练成本和数据处理复杂度，而不是在线延迟。</p>
 <h2 id="8">局限与风险</h2>
 <ol><li>论文主要在 Amazon 三个公开类目上验证，虽然覆盖 Arts、Games、Instruments，但还不能说明在新闻、短视频、本地生活、广告等高动态场景中同样有效。</li></ol>
