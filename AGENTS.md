@@ -26,6 +26,8 @@ Use absolute paths and keep one before/after pair per changed file.
 - `papers.html`: paper library and search/list page.
 - `papers/*.html`: generated paper-note detail pages.
 - `assets/css/site.css`: shared styles, including Markdown and MathJax layout.
+- `assets/js/site-index.js`: shared homepage/library metadata, including note
+  record dates and DOM-derived count synchronization.
 - `assets/images/<slug>/`: copied images for each paper note.
 
 The site is plain static HTML/CSS/JS. There is no build system and no frontend
@@ -64,7 +66,13 @@ Recommended workflow:
    - Restore inline math as `<span class="math-inline">$...$</span>`.
 8. Add the MathJax config and loader in each paper detail page.
 9. Add the new paper card to `papers.html`.
-10. Optionally add the paper to the short homepage list in `index.html`.
+10. Add the paper record date to `assets/js/site-index.js` using the page href
+    as the key and `YYYY-MM-DD` as the value. For daily notes, use the local
+    note folder date; for manual notes, use the manual note folder date.
+11. Optionally add the paper to the homepage recent list in `index.html`.
+    Homepage and library counts are rendered from the DOM by
+    `assets/js/site-index.js`; do not leave hardcoded stale totals such as
+    `34 / 34` or `39`.
 
 ## Math Rendering Pitfalls
 
@@ -110,6 +118,10 @@ Use browser-level validation with Playwright and local Chrome when possible:
 - Check desktop and mobile widths.
 - Check no broken images.
 - Check no horizontal overflow.
+- Check the homepage title stays on one line at desktop width.
+- Check homepage `Notes`, recent-list badge, and library `Notes` all match the
+  number of listed papers.
+- Check each homepage recent item shows a right-side record date.
 - Check inline MathJax containers are not `display: block`.
 
 If using the bundled runtime, Playwright can be imported with:
