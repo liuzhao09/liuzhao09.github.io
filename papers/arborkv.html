@@ -18,21 +18,23 @@
 <p>LLM 推理正在从单条 CoT 转向测试时搜索。Tree-of-Thought、best-first search、多候选 verifier 和回溯式规划都能提高复杂任务表现，但它们会把 KV cache 从一条路径扩展到一棵树。显存不是线性随 token 增长，而是随 frontier、分支和保留轨迹一起膨胀。</p>
 <p>传统 KV cache 策略多面向线性生成，例如按最近使用、注意力权重或 token 重要性淘汰。树状推理不同：某个 inactive branch 现在不用，不代表之后不会回溯；某个 ancestor 可能被多个子分支共享，价值高于普通历史 token。</p>
 <p>ArborKV 的问题定义是：如何在严格显存预算下保留对未来推理最有价值的 KV，同时允许必要时恢复被删内容。这是测试时扩展推理能否落地到普通 GPU 的关键工程问题。</p>
-<p><img alt="图 1" src="../assets/images/arborkv/1.jpg" /></p>
-<p>图 1 展示树状推理的 KV cache 难题。线性 CoT 只需沿一个序列前进，而 ToT 会产生多个分支和回溯点，若全部保留 KV，很快耗尽显存；如果把树压平成线性队列，又可能误删未来要回溯的分支。 放在背景部分看，它说明论文真正要解决的是系统链路中的瓶颈，而不是单纯追求一个更复杂的网络结构。这个图也给后续方法拆解建立了参照：哪些信息应该先保留，哪些信息应该等到任务或候选明确后再使用。</p>
+<p><img alt="Figure 1：树状推理中的 KV cache 难题" src="../assets/images/arborkv/1.jpg" /></p>
+<p>Figure 1（原文图 1）展示树状推理的 KV cache 难题。线性 CoT 只需沿一个序列前进，而 ToT 会产生多个分支和回溯点，若全部保留 KV，很快耗尽显存；如果把树压平成线性队列，又可能误删未来要回溯的分支。 放在背景部分看，它说明论文真正要解决的是系统链路中的瓶颈，而不是单纯追求一个更复杂的网络结构。这个图也给后续方法拆解建立了参照：哪些信息应该先保留，哪些信息应该等到任务或候选明确后再使用。</p>
 <h2 id="2">2. 核心方法</h2>
 <p>方法包含 Multi-Signal Value Estimation。它用多个信号估计 thought block 的价值，例如与当前活跃路径的关系、语义价值、拓扑位置和历史复用可能性。论文还用离线 calibration，通过 leave-one-out masking 测量某个 block 被移除后对答案准确率的影响。</p>
 <p>Tree-Aware Allocation 决定预算如何在 active path、ancestor 和 inactive subtree 之间分配。与简单 LRU 不同，它显式利用搜索树结构：活跃分支和祖先节点优先，暂时不用但可能回溯的分支保留可恢复路径。</p>
 <p>Eviction 是 token-extractive 的，避免生成式重写 KV；lazy rehydration 则在回溯需要时恢复被删内容。这个设计承认显存里不能全留，但也不把删除变成不可逆。</p>
 <p>整体上，ArborKV 是推理 runtime 层的方法，不要求重新训练模型。它关注的是在同样模型和同样搜索控制器下，通过更好的 KV 管理扩大可搜索空间。</p>
-<p><img alt="图 2" src="../assets/images/arborkv/2.jpg" /></p>
-<p>图 2 是 ArborKV 框架，包括 Multi-Signal Value Estimation、Tree-Aware Allocation、token-extractive eviction 和 lazy rehydration。它的重点不是简单按时间删 KV，而是根据搜索树位置、活跃路径和未来复用概率分配预算。 方法图或结果表在这里的作用是把抽象概念落到可实现模块。复现时应优先复刻这些模块之间的输入输出，而不是只记住论文里的缩写。尤其要关注哪些信号是训练期可得、哪些信号是查询或候选确定后才可得，避免把离线信息泄露到线上评估。</p>
+<p><img alt="Figure 2：ArborKV 框架" src="../assets/images/arborkv/2.jpg" /></p>
+<p>Figure 2（原文图 2）是 ArborKV 框架，包括 Multi-Signal Value Estimation、Tree-Aware Allocation、token-extractive eviction 和 lazy rehydration。它的重点不是简单按时间删 KV，而是根据搜索树位置、活跃路径和未来复用概率分配预算。 方法图或结果表在这里的作用是把抽象概念落到可实现模块。复现时应优先复刻这些模块之间的输入输出，而不是只记住论文里的缩写。尤其要关注哪些信号是训练期可得、哪些信号是查询或候选确定后才可得，避免把离线信息泄露到线上评估。</p>
 <h2 id="3">3. 实验与结果</h2>
 <p>实验任务包括 GSM8K、MATH500、Game of 24 和 AIME，覆盖数学推理和显式搜索任务。模型包括 Llama-3.1-8B-Instruct 与 Qwen2.5-7B-Instruct，作者强调这些模型可在 24GB GPU 上实践。</p>
 <p>主指标包括 accuracy、peak KV memory、end-to-end latency 和 rehydration count。论文报告 ArborKV 可以最高约 4 倍降低峰值 KV memory，并保持接近 full- retention 的准确率。</p>
 <p>消融显示 MSVE 的组合信号、树感知分配和 topological proximity 都重要。只按单一 proxy 估计价值，或忽略树结构，都会降低质量或增加恢复次数。内存动态曲线也说明 ArborKV 在分支切换时会主动释放低复用上下文。</p>
-<p><img alt="图 3" src="../assets/images/arborkv/3.jpg" /></p>
-<p>表 1/2 一类结果展示不同任务、模型和预算下的准确率、峰值显存与延迟权衡。ArborKV 的目标是尽量保持 full-retention accuracy，同时显著降低峰值 KV 显存，让固定 24GB 级硬件能跑更宽或更深的搜索。 读这类结果时不能只看最高值，还要看作者控制了哪些变量。若实验同时改变 backbone、特征、数据切分和后处理，就很难判断收益来源；本轮笔记只采纳论文文本能支撑的结论，对未公开的线上绝对指标和未核验代码状态保持保守。</p>
+<p><img alt="Table 1：主结果准确率与峰值显存" src="../assets/images/arborkv/3.jpg" /></p>
+<p>Table 1（原文表 1）展示不同任务、模型和预算下的准确率与峰值显存权衡。ArborKV 的目标是尽量保持 full-retention accuracy，同时显著降低峰值 KV 显存，让固定 24GB 级硬件能跑更宽或更深的搜索。</p>
+<p><img alt="Figure 3：KV memory dynamics" src="../assets/images/arborkv/4.jpg" /></p>
+<p>Figure 3（原文图 3）展示树搜索过程中的 KV memory dynamics：full-retention baseline 会触发 OOM，而 ArborKV 通过 active path、inactive context 和 lazy rehydration 控制显存峰值。读这类结果时不能只看最高值，还要看作者控制了哪些变量。若实验同时改变 backbone、特征、数据切分和后处理，就很难判断收益来源；本轮笔记只采纳论文文本能支撑的结论，对未公开的线上绝对指标和未核验代码状态保持保守。</p>
 <h2 id="4">4. 我的理解</h2>
 <p>ArborKV 的意义是提醒我们，测试时扩展不只是算法问题，也是系统问题。很多 ToT 或 agentic search 论文默认可以保留大量中间状态，但真实部署中显存和延迟很快成为瓶颈。</p>
 <p>我最认可它的结构感知视角。树搜索中的 token 价值不只由注意力或时间决定，还由它在搜索树中的位置决定。ancestor、active branch 和可能回溯节点的价值完全不同，这和推荐系统中候选树、beam search 和多阶段召回的缓存管理也有相似性。</p>

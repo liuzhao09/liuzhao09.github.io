@@ -18,21 +18,21 @@
 <p>长期记忆 QA 的难点不是“有没有历史”，而是证据通常散落在多轮对话、多个 session 和大量无关内容中。传统 memory system 往往在未来问题未知时预先总结或压缩记忆，等问题来了再按 embedding similarity 检索。这会造成两个问题：预压缩可能丢掉未来问题需要的细节，相似度检索也不一定找得到真正答题证据。</p>
 <p>DeferMem 选择把关键证据压缩推迟到 query-time。这个设计很符合经验：同一段历史对于不同问题有不同价值。用户曾经说过“我不喜欢太甜”在餐厅推荐里重要，在天气问答里无关；同样一句对话需要在问题出现后才知道是否是证据。</p>
 <p>这和推荐系统的长期兴趣建模也高度相关。用户长期历史不能只被压成固定画像，否则会丢失上下文；更好的做法是保存高召回候选记忆，在当前推荐任务或查询下动态抽取证据。</p>
-<p><img alt="图 1" src="../assets/images/defermem/1.jpg" /></p>
-<p>图 1 对比传统 memory systems 与 DeferMem。传统方法通常在未来问题未知时预先压缩记忆，然后用相似度检索；DeferMem 则先保留原始历史结构，等查询出现后再蒸馏证据。这个差别决定了它更适合需要问题条件化的长期记忆 QA。 放在背景部分看，它说明论文真正要解决的是系统链路中的瓶颈，而不是单纯追求一个更复杂的网络结构。这个图也给后续方法拆解建立了参照：哪些信息应该先保留，哪些信息应该等到任务或候选明确后再使用。</p>
+<p><img alt="Figure 1：既有记忆系统与 DeferMem 对比" src="../assets/images/defermem/1.jpg" /></p>
+<p>Figure 1（原文图 1）对比传统 memory systems 与 DeferMem。传统方法通常在未来问题未知时预先压缩记忆，然后用相似度检索；DeferMem 则先保留原始历史结构，等查询出现后再蒸馏证据。这个差别决定了它更适合需要问题条件化的长期记忆 QA。 放在背景部分看，它说明论文真正要解决的是系统链路中的瓶颈，而不是单纯追求一个更复杂的网络结构。这个图也给后续方法拆解建立了参照：哪些信息应该先保留，哪些信息应该等到任务或候选明确后再使用。</p>
 <h2 id="2">2. 核心方法</h2>
 <p>DeferMem 的第一层是 segment-link structure。它把对话历史组织成片段，并通过链接捕捉片段之间的关系。查询到来时，retriever 不追求精确，只要以较低成本取回高召回候选，保证答案支持信息尽量不被漏掉。</p>
 <p>第二层是 memory distiller。候选通常很吵，直接喂给 answerer 会浪费 token，也可能引入干扰。distiller 的动作包括消息选择和 evidence rewriting，把分散片段变成 query- conditioned、self-contained 的证据。</p>
 <p>DistillPO 是训练核心。它把证据蒸馏看成结构化 action，用 decomposed and gated rewards 评价证据是否有用、忠实、完整，并用 structure-aligned advantage assignment 分配信用。相比 SFT 或普通 DAPO，它更针对“从 noisy memory 中抽取证据”这个任务。</p>
 <p>框架最终让 answerer 看到的是已经按问题整理过的证据，而不是原始历史或粗粒度记忆单元。这能降低 token 成本，也减少 downstream answerer 自行 denoise 的负担。</p>
-<p><img alt="图 2" src="../assets/images/defermem/2.jpg" /></p>
-<p>图 2 是 DeferMem 框架。segment-link retriever 先产生高召回候选，memory distiller 再基于 DistillPO 执行消息选择和证据改写。这里的重点是 retriever 与 distiller 的职责分离：前者容忍噪声，后者负责把噪声变成答案可用证据。 方法图或结果表在这里的作用是把抽象概念落到可实现模块。复现时应优先复刻这些模块之间的输入输出，而不是只记住论文里的缩写。尤其要关注哪些信号是训练期可得、哪些信号是查询或候选确定后才可得，避免把离线信息泄露到线上评估。</p>
+<p><img alt="Figure 2：DeferMem 两阶段框架" src="../assets/images/defermem/2.jpg" /></p>
+<p>Figure 2（原文图 2）是 DeferMem 框架。segment-link retriever 先产生高召回候选，memory distiller 再基于 DistillPO 执行消息选择和证据改写。这里的重点是 retriever 与 distiller 的职责分离：前者容忍噪声，后者负责把噪声变成答案可用证据。 方法图或结果表在这里的作用是把抽象概念落到可实现模块。复现时应优先复刻这些模块之间的输入输出，而不是只记住论文里的缩写。尤其要关注哪些信号是训练期可得、哪些信号是查询或候选确定后才可得，避免把离线信息泄露到线上评估。</p>
 <h2 id="3">3. 实验与结果</h2>
 <p>论文使用 LoCoMo 和 LongMemEval-S 两个长期记忆 QA 数据集。基线分三类：FullText 和 NaiveRAG，代表直接给全部历史或简单检索；Mem0、A-Mem、MemoryOS、MemGAS、LightMem、GAM 等长期记忆系统；以及 Memory-R1 这类强化学习记忆利用方法。</p>
 <p>主表同时报告准确率、token cost 和 time cost。DeferMem 的主要结论是，在保证或提升 QA 准确率的同时，减少记忆操作负担。LoCoMo 还区分 non-adversarial 和 adversarial questions，说明作者关注长期记忆中的冲突和误导场景。</p>
 <p>超参数分析显示 segment-link retriever 可以在 recall 与 retrieved tokens 之间做权衡。消融结果则表明，只给 answerer 高召回候选不够，distiller 才是把噪声转成证据的关键；DistillPO 训练也明显优于未训练或简单 SFT 的 distiller。</p>
-<p><img alt="图 3" src="../assets/images/defermem/3.jpg" /></p>
-<p>表 1 比较 LongMemEval-S 和 LoCoMo 上的准确率、token cost 与 time cost。DeferMem 的价值不是只提升准确率，也在于改善准确率与记忆操作成本之间的 frontier。对真实 Agent 来说，这比单纯 FullText 更重要，因为长期历史会持续增长。 读这类结果时不能只看最高值，还要看作者控制了哪些变量。若实验同时改变 backbone、特征、数据切分和后处理，就很难判断收益来源；本轮笔记只采纳论文文本能支撑的结论，对未公开的线上绝对指标和未核验代码状态保持保守。</p>
+<p><img alt="Table 1：长期记忆 QA 主结果与成本" src="../assets/images/defermem/3.jpg" /></p>
+<p>Table 1（原文表 1）比较 LongMemEval-S 和 LoCoMo 上的准确率、token cost 与 time cost。DeferMem 的价值不是只提升准确率，也在于改善准确率与记忆操作成本之间的 frontier。对真实 Agent 来说，这比单纯 FullText 更重要，因为长期历史会持续增长。 读这类结果时不能只看最高值，还要看作者控制了哪些变量。若实验同时改变 backbone、特征、数据切分和后处理，就很难判断收益来源；本轮笔记只采纳论文文本能支撑的结论，对未公开的线上绝对指标和未核验代码状态保持保守。</p>
 <h2 id="4">4. 我的理解</h2>
 <p>DeferMem 把长期记忆系统的边界划得很清楚：记忆存储负责高召回，证据蒸馏负责问题条件化，回答模型负责最终生成。很多 Agent 失败是因为把三件事混在一个 embedding retrieval 里，结果相似但无用的历史片段被塞进上下文。</p>
 <p>它对个性化推荐也有启发。用户长期历史可以先保持高召回片段库，然后在当前推荐场景下蒸馏“为什么这个用户现在可能关心某类 item”的证据。这样比固定用户画像更灵活，也比把全部历史丢进 LLM 更便宜。</p>

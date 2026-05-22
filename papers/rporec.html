@@ -18,22 +18,22 @@
 <p>LLM4Rec 的核心矛盾是，大模型擅长把用户历史、物品语义和世界知识写成自然语言推理，但推荐系统最终需要的是可排序、可校准、可低延迟服务的 item 分数。直接把 CoT 文本交给生成模型预测 item，容易出现语义漂移；只把 LLM embedding 当特征，又浪费了显式推理能力。</p>
 <p>RPORec 的问题定义很明确：如何让 LLM 的 reasoning 既保持可解释性，又真正对推荐目标负责。作者认为已有方法存在结构破坏和目标错位。推理文本可能很好看，但不一定能提升命中率；推荐头可能能学习 item 表征，却不一定知道哪些 reasoning 片段对排序有用。</p>
 <p>这篇论文来自 CityU 与快手团队，论文还给出广告系统部署。相比纯学术 LLM4Rec 工作，它更关心小模型、近线处理、在线 ranking 接入和成本约束。这个视角很重要，因为推荐链路中 LLM 通常不是在线主模型，而是用户理解、内容理解或特征生成模块。</p>
-<p><img alt="图 1" src="../assets/images/rporec/1.jpg" /></p>
-<p>图 1 是 RPORec 的关键。它把 LLM backbone、Rechead、Stage I reasoning-augmented modeling 和 Stage II GRPO alignment 放到同一框架里。读图时要注意 Rechead 不是简单分类头，而是把文本 CoT 中的偏好线索压到推荐表征里，随后又反过来为 LLM reasoning 提供任务相关反馈。 放在背景部分看，它说明论文真正要解决的是系统链路中的瓶颈，而不是单纯追求一个更复杂的网络结构。这个图也给后续方法拆解建立了参照：哪些信息应该先保留，哪些信息应该等到任务或候选明确后再使用。</p>
+<p><img alt="Figure 1：RPORec 总体框架" src="../assets/images/rporec/1.jpg" /></p>
+<p>Figure 1（原文图 1）是 RPORec 的关键。它把 LLM backbone、Rechead、Stage I reasoning-augmented modeling 和 Stage II GRPO alignment 放到同一框架里。读图时要注意 Rechead 不是简单分类头，而是把文本 CoT 中的偏好线索压到推荐表征里，随后又反过来为 LLM reasoning 提供任务相关反馈。 放在背景部分看，它说明论文真正要解决的是系统链路中的瓶颈，而不是单纯追求一个更复杂的网络结构。这个图也给后续方法拆解建立了参照：哪些信息应该先保留，哪些信息应该等到任务或候选明确后再使用。</p>
 <h2 id="2">2. 核心方法</h2>
 <p>RPORec 的 Stage I 先生成高质量 CoT，把推理作为辅助知识注入推荐头。Rechead 使用 lightweight transformer 与 adaptive gating 处理 CoT 表征，目标是过滤冗余语言，把用户兴趣、物品语义和行为模式压成推荐可用的表示。</p>
 <p>Stage II 冻结 Rechead，让它成为稳定的推荐反馈器，然后用 GRPO 优化 LLM backbone。reward 不是单一命中指标，而是包含格式、清洁度、相似性、完整性、实体等多个维度，并把推荐目标反馈给 reasoning 过程。这样做的直觉是让 LLM 学会生成“对推荐有用的理由”，而不是生成一般意义上的漂亮解释。</p>
 <p>这套流程的妙处在于解耦。推荐头负责 item retrieval 的精确性，LLM 负责语义推理和兴趣抽象。先训练推荐头，再让推荐头参与强化优化，避免一开始就让自由文本和 item id 预测互相干扰。</p>
 <p>在线部署也体现了这种解耦。LLM backbone 不直接服务于每次曝光的毫秒级排序，而是在 nearline 侧分析用户画像和历史行为，抽取 CoT 与答案特征；线上 ranking model 作为任务特定 Rechead 做细粒度打分。</p>
-<p><img alt="图 2" src="../assets/images/rporec/2.jpg" /></p>
-<p>表 1 在三个 Amazon 数据集上比较 H@5/10/20 和 N@5/10/20。RPORec 相对序列推荐、LLM 推荐和 RL 型基线都有提升，作者还用显著性标记说明相对次优方法的差异。这里的重点是 small LLM Qwen3-0.6B 也能通过结构化推荐头获得任务收益，而不是依赖大模型规模。 方法图或结果表在这里的作用是把抽象概念落到可实现模块。复现时应优先复刻这些模块之间的输入输出，而不是只记住论文里的缩写。尤其要关注哪些信号是训练期可得、哪些信号是查询或候选确定后才可得，避免把离线信息泄露到线上评估。</p>
+<p><img alt="Table 1：RPORec 与基线性能比较" src="../assets/images/rporec/2.jpg" /></p>
+<p>Table 1（原文表 1）在三个 Amazon 数据集上比较 H@5/10/20 和 N@5/10/20。RPORec 相对序列推荐、LLM 推荐和 RL 型基线都有提升，作者还用显著性标记说明相对次优方法的差异。这里的重点是 small LLM Qwen3-0.6B 也能通过结构化推荐头获得任务收益，而不是依赖大模型规模。 方法图或结果表在这里的作用是把抽象概念落到可实现模块。复现时应优先复刻这些模块之间的输入输出，而不是只记住论文里的缩写。尤其要关注哪些信号是训练期可得、哪些信号是查询或候选确定后才可得，避免把离线信息泄露到线上评估。</p>
 <h2 id="3">3. 实验与结果</h2>
 <p>论文在 Amazon Musical Instruments、CDs and Vinyl、Video Games 三个公开序列推荐数据集上评估 H@K 和 N@K。基线覆盖 GRU4Rec、Caser 等传统方法，也包括 LLM-based 与 RL-based 方案。作者使用 Qwen3-0.6B 作为主干，强调效率和部署可行性。</p>
 <p>主结果显示 RPORec 在多个 K 值上取得领先。更值得看的是消融：去掉 CoT 输入、去掉 Stage I、去掉 Stage II 或去掉各 reward 项都会造成不同程度下降，说明收益不是单纯来自更大训练量，而是来自 reasoning、Rechead 和偏好优化的组合。</p>
 <p>作者还用 Llama3.2-1B 在 CDs and Vinyl 上做 backbone generalization，结果与 Qwen3-0.6B 接近，说明框架不完全绑定某个基座。案例分析展示 CoT reward 会让 reasoning 更聚焦，长度比较也说明训练后推理内容更有结构。</p>
 <p>在线部分报告了集成到大规模工业广告系统的 A/B 测试和部署架构，但论文公开文本没有给出所有业务敏感指标细节。因此日报和笔记只把“存在工业部署形态”作为事实，不把线上提升扩展成未核验数字。</p>
-<p><img alt="图 3" src="../assets/images/rporec/3.jpg" /></p>
-<p>图 5 展示线上部署架构：LLM backbone 被放在 nearline 用户理解模块，在线 ranking model 作为 Rechead 使用。这个图对工程最有价值，因为它承认 LLM 不适合直接阻塞在线排序路径，而应先生成可缓存、可特征化的用户兴趣与 reasoning 信号。 读这类结果时不能只看最高值，还要看作者控制了哪些变量。若实验同时改变 backbone、特征、数据切分和后处理，就很难判断收益来源；本轮笔记只采纳论文文本能支撑的结论，对未公开的线上绝对指标和未核验代码状态保持保守。</p>
+<p><img alt="Figure 5：线上部署架构" src="../assets/images/rporec/3.jpg" /></p>
+<p>Figure 5（原文图 5）展示线上部署架构：LLM backbone 被放在 nearline 用户理解模块，在线 ranking model 作为 Rechead 使用。这个图对工程最有价值，因为它承认 LLM 不适合直接阻塞在线排序路径，而应先生成可缓存、可特征化的用户兴趣与 reasoning 信号。 读这类结果时不能只看最高值，还要看作者控制了哪些变量。若实验同时改变 backbone、特征、数据切分和后处理，就很难判断收益来源；本轮笔记只采纳论文文本能支撑的结论，对未公开的线上绝对指标和未核验代码状态保持保守。</p>
 <h2 id="4">4. 我的理解</h2>
 <p>RPORec 的价值在于承认推荐任务需要结构化反馈。很多 LLM4Rec 方法把推荐变成语言生成任务，但 item 命中、曝光偏差、用户短期兴趣和长期偏好都不是普通文本生成奖励能覆盖的。RPORec 让推荐头参与优化，使推理向排序目标靠拢。</p>
 <p>我认为它最适合的落地位置不是在线 reranker，而是用户理解与候选解释层。用户最近行为可以被 LLM 压缩成兴趣片段、偏好冲突和意图摘要，再由在线模型消费。这样既利用语言推理，又避免在线延迟过高。</p>
