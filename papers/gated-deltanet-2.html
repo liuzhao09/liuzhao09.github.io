@@ -3,47 +3,119 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Gated DeltaNet-2 解读 | liuzhao09</title>
-    <meta name="description" content="Gated DeltaNet-2: Decoupling Erase and Write in Linear Attention 论文精读笔记">
+    <title>Gated DeltaNet-2：在线性注意力中解耦擦除与写入 | liuzhao09</title>
+    <meta name="description" content="Gated DeltaNet-2 论文精读笔记">
     <link rel="stylesheet" href="../assets/css/site.css">
+    <script>window.MathJax = {tex: {inlineMath: [['$', '$'], ['\\(', '\\)']], displayMath: [['$$', '$$'], ['\\[', '\\]']]}, svg: {fontCache: 'global'}};</script>
+    <script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
   </head>
   <body>
     <header class="site-header"><nav class="nav" aria-label="主导航"><a class="brand" href="../index.html"><span class="brand-mark">LZ</span><span>liuzhao09</span></a><div class="nav-links"><a href="../index.html">首页</a><a href="../papers.html">论文库</a></div></nav></header>
     <main class="page-shell paper-shell">
-      <section class="paper-hero"><div><p class="breadcrumb"><a href="../papers.html">论文库</a> / Gated DeltaNet-2</p><h1 class="paper-title">Gated DeltaNet-2：Gated DeltaNet-2: Decoupling Erase and Write in Linear Attention</h1><p class="paper-subtitle">2026-05-23 每日论文精读同步页</p><div class="tag-row"><span class="tag">Paper Note</span><span class="tag">Daily Research</span></div></div></section>
-      <div class="paper-layout"><aside class="paper-toc" aria-label="目录"><p>目录</p><a class="toc-l1" href="#1">1. 背景和问题</a>
-<a class="toc-l1" href="#2">2. 方法</a>
-<a class="toc-l1" href="#3">3. 实验结果</a>
-<a class="toc-l1" href="#4">4. 总结</a>
-<a class="toc-l2" href="#4-1">4.1 我的判断</a>
-<a class="toc-l2" href="#4-2">4.2 工程启发与复现建议</a>
-<a class="toc-l2" href="#4-3">4.3 局限与后续跟进</a></aside><article class="markdown-body paper-content"><p>这里精读一篇 2026-05-21 submitted 公开的论文《Gated DeltaNet-2: Decoupling Erase and Write in Linear Attention》。中文可译为《Gated DeltaNet-2：在线性注意力中解耦擦除和写入》。论文链接：<a href="https://arxiv.org/abs/2605.22791">arXiv:2605.22791</a>。作者为 Ali Hatamizadeh, Yejin Choi, Jan Kautz；机构/团队记录为 NVIDIA。代码/项目页状态：已核验 GitHub: https://github.com/NVlabs/GatedDeltaNet-2。</p>
-<h2 id="1">1. 背景和问题</h2>
-<p>Softmax attention 的上下文和 cache 随序列长度增长，长上下文训练/推理成本高。线性注意力和 recurrent attention 用固定大小状态替代显式 attention matrix，但难点是压缩状态怎么稳定存取历史关联。DeltaNet、Gated DeltaNet、KDA、Mamba-3 等路线都在解决“忘什么、写什么、如何避免覆盖已有信息”。Gated DeltaNet-2 指出现有 delta-rule 的一个限制：同一个 scalar gate 同时控制 key-side erase 和 value-side write，而这两个动作本质不同。</p>
-<p>这篇论文放在今天的调研里，主要因为它把一个热门概念落到了具体链路。它不是做 KV cache 剪枝，而是从 recurrent linear attention 的状态更新本身改进长期记忆：把 erase gate 和 write gate 分离，让固定大小状态更好地编辑旧关联和写入新值。 如果只看标题，很容易把它理解成又一篇泛泛使用 LLM 或推荐系统的工作；但从原文的任务设定、图表和实验看，它真正关心的是系统中哪一个环节最脆弱、哪一个中间表示最需要被重新设计。对工程读者来说，先厘清这个问题，比记住模型名更重要。</p>
-<h2 id="2">2. 方法</h2>
-<p>Gated Delta Rule-2 引入 channel-wise erase gate b_t 和 channel-wise write gate w_t。erase 在 key side 决定从旧读出里移除哪些坐标，write 在 value side 决定新值提交多少；两者不再共享一个标量。方法继承 KDA 的 channel-wise decay，并推导 fast-weight update view、chunkwise WY algorithm 和 gate-aware backward pass，使训练仍能并行。架构上，Gated DeltaNet-2 token mixer 可单独组成 recurrent 模型，也可以和 sliding-window attention 交替形成 hybrid block：recurrent mixer 负责长程压缩，SWA 保留局部精确交互。</p>
-<p><img alt="Figure 1：Gated DeltaNet-2 架构" src="../assets/images/gated-deltanet-2/1.jpg" /></p>
-<p>Figure 1 展示 hybrid architecture 和 block design。右侧的 token mixer 同时产生 query/key/value、channel-wise decay、erase gate 与 write gate；左侧则说明它如何与 MLP 和 sliding-window attention 组成 hybrid cell。读这张图时要抓住分工：recurrent mixer 负责固定状态长程记忆，SWA 保留局部精确交互。</p>
-<p>方法上可以把它拆成三层理解。第一层是输入输出边界：模型或系统到底读什么、产出什么、产物是否能直接进入下游链路。第二层是训练或优化信号：论文使用的是监督、强化、合成标签、结构约束还是运行时验证。第三层是部署边界：高成本模块是否在线、是否可缓存、是否有回滚与审计、是否会影响已有召回/排序/推理服务。沿这三层看，论文的贡献就不会只停留在“用了 LLM”或“加了一个模块”。</p>
-<p>对比已有方法，本文的共同特点是把自由度收窄到可验证形式。Airbnb 把 LLM 合成限制在 listing pair 和 seed language 上；GCRS/ThinkGR 把生成约束到 semantic ID 或 docid；VPO 把多样性定义到 reward vector；Gated DeltaNet-2 把长期记忆压进可训练的 erase/write state update；MOSS 则把源码改写放进 trial worker 和 verdict pipeline。这样的设计比完全开放的生成更不浪漫，但更接近可落地系统。</p>
-<h2 id="3">3. 实验结果</h2>
-<p>模型规模为 1.3B，训练在 100B FineWeb-Edu tokens 上。比较对象包括 Mamba-2、Gated DeltaNet、KDA、Mamba-3 和 Transformer/hybrid variants。语言建模和常识推理表显示 Gated DeltaNet-2 平均表现最强；RULER needle-in-a-haystack 尤其多键检索任务上，解耦 erase/write 的优势更明显。真实检索任务表和 H100 throughput 图说明，它在长序列下保持近似平坦吞吐，而 Transformer 随长度退化更明显。消融中把 gate 压成 scalar 或改变 erase range 都会影响结果，支持结构设计。</p>
-<p><img alt="Table 2-3：语言建模和 RULER NIAH 主结果" src="../assets/images/gated-deltanet-2/2.jpg" /></p>
-<p>Table 2-3 说明 Gated DeltaNet-2 不只是 perplexity 稍好，而是在固定状态记忆压力大的 NIAH、多键检索场景更突出。多键检索要求模型把不同 key-value association 分开保存，正好对应 erase/write 解耦要解决的状态编辑问题。</p>
-<p><img alt="Figure 2：H100 训练吞吐对比" src="../assets/images/gated-deltanet-2/3.jpg" /></p>
-<p>Figure 2 把吞吐和序列长度联系起来。Transformer 随上下文变长明显退化，而 Gated DeltaNet-2 保持更平坦的 throughput。对长上下文服务而言，这类结果提示一种不同路线：不只是优化 KV cache，也可以用固定状态 recurrent mixer 改变内存增长曲线。</p>
-<p>实验解读时我更关注三个问题。第一，指标是否和论文主张一致：例如冷启动搜索不能只看生成文本质量，必须看检索/排序样本是否有区分度；后训练多样性不能只看单次 pass@1，还要看 best@k。第二，消融是否真的切中了核心机制：去掉 seed、去掉 structured generation、去掉 hybrid decoding、合并 erase/write gate 或删除验证回放，应该能解释主要退化。第三，实验是否给出工程成本信号：延迟、token cost、吞吐、代码可用性、线上部署形态或回滚机制，决定它能否从论文进入系统。</p>
-<p>这篇论文的证据整体是有价值的，但不能过度外推。公开 benchmark、预印本实验和工业摘要都只能证明某个受控条件下的收益；真实推荐/搜索/Agent/LLM serving 系统还会受到流量分布、库存变化、硬件、权限、隐私、灰度策略和监控口径影响。因此这份笔记把实验当作“方向证据”，不把它写成确定性工程结论。</p>
-<h2 id="4">4. 总结</h2>
-<p>对 LLM，它提供了长上下文模型不只靠扩大窗口和 cache 管理，也可以改状态更新算子的证据。对推荐/检索，它提醒序列用户建模中的“旧兴趣擦除”和“新兴趣写入”也可能需要解耦，而不是用一个门控同时控制。</p>
-<h3 id="4-1">4.1 我的判断</h3>
-<p>我认为这篇论文最值得保留的不是单个指标，而是它对系统边界的处理。它没有把所有问题都交给一个更大的模型，而是明确哪些信号要生成、哪些信号要约束、哪些信号要留给下游检索/排序/验证/推理框架。这个思路对于后续做推荐系统和大模型交叉非常重要：LLM 的能力要变成系统收益，必须经过候选空间、约束解码、reward、缓存、回放或人审这些接口。</p>
-<h3 id="4-2">4.2 工程启发与复现建议</h3>
-<p>第一，复现时不要从完整系统开始，应先复现最小闭环：输入、约束、指标和一个可替换 baseline。第二，所有生成中间产物都要保留可追溯来源，尤其是合成 query、CoT、semantic ID、docid、reward vector 或自改写 patch。第三，线上前要设置反事实检查：去掉 LLM 信号、打乱中间表示、降低刷新频率或替换 reward，看指标是否仍然成立。第四，要把成本作为一等指标，包含 token、GPU、延迟、工程复杂度和出错后的回滚成本。</p>
-<h3 id="4-3">4.3 局限与后续跟进</h3>
-<p>局限主要有四点：结果基于 1.3B 与 100B tokens，能否扩展到更大 dense/MoE 模型仍需验证。；recurrent state 对精确长程复制的能力仍有限，hybrid SWA 说明局部精确 attention 仍不可或缺。；代码虽可访问，但训练复现成本高，需要大规模预训练资源。；RULER 与真实长文任务仍有差距，生产问答和代码场景需要更多忠实性评估。。这些局限并不否定论文价值，但决定了它适合先作为研究原型或局部链路增强，而不是直接替换既有生产系统。</p>
-<p>后续跟进建议：查看 NVlabs 仓库实现，重点看 gate-aware backward 和 chunkwise WY。；比较 Gated DeltaNet-2 与 Mamba-3/Kimi Linear 在相同 tokenizer、数据和推理框架下的成本。；关注 vLLM/SGLang 是否出现对 recurrent linear attention 的高效 serving 支持。。本轮自动化已经下载 PDF、裁剪关键图表并生成本地笔记；如果本笔记字符数低于 10000，是因为本轮只保留了已在 PDF、arXiv 页面或可访问链接中核验的事实，没有为满足字数硬补未核验实现细节。</p></article></div>
+      <section class="paper-hero"><div><p class="breadcrumb"><a href="../papers.html">论文库</a> / gated-deltanet-2</p><h1 class="paper-title">Gated DeltaNet-2：在线性注意力中解耦擦除与写入</h1><p class="paper-subtitle">2026-05-23 重构版每日论文精读同步页</p><div class="tag-row"><span class="tag">Paper Note</span><span class="tag">Rebuilt</span></div></div></section>
+      <div class="paper-layout"><aside class="paper-toc" aria-label="目录"><p>目录</p><a class="toc-l1" href="#1-背景和问题">1. 背景和问题</a>
+<a class="toc-l1" href="#2-方法">2. 方法</a>
+<a class="toc-l2" href="#2-1-从-delta-rule-到-gated-delta-rule-2">2.1 从 Delta Rule 到 Gated Delta Rule-2</a>
+<a class="toc-l2" href="#2-2-结构图-hybrid-block-和-token-mixer">2.2 结构图：hybrid block 和 token mixer</a>
+<a class="toc-l2" href="#2-3-channel-wise-gate-为什么重要">2.3 Channel-wise gate 为什么重要</a>
+<a class="toc-l2" href="#2-4-chunkwise-wy-与并行训练">2.4 Chunkwise WY 与并行训练</a>
+<a class="toc-l2" href="#2-5-hybrid-with-sliding-window-attention">2.5 Hybrid with sliding-window attention</a>
+<a class="toc-l2" href="#2-6-fast-weight-view">2.6 Fast-weight view</a>
+<a class="toc-l2" href="#2-7-erase-gate-的作用">2.7 Erase gate 的作用</a>
+<a class="toc-l2" href="#2-8-write-gate-的作用">2.8 Write gate 的作用</a>
+<a class="toc-l2" href="#2-9-与-kda-mamba-的关系">2.9 与 KDA / Mamba 的关系</a>
+<a class="toc-l2" href="#2-10-hybrid-block-的取舍">2.10 Hybrid block 的取舍</a>
+<a class="toc-l2" href="#2-11-训练-kernel-与复现门槛">2.11 训练 kernel 与复现门槛</a>
+<a class="toc-l2" href="#2-12-公式审计-状态编辑比状态大小更重要">2.12 公式审计：状态编辑比状态大小更重要</a>
+<a class="toc-l2" href="#2-13-训练并行性的真正门槛">2.13 训练并行性的真正门槛</a>
+<a class="toc-l2" href="#2-14-推荐序列建模的迁移点">2.14 推荐序列建模的迁移点</a>
+<a class="toc-l1" href="#3-实验结果">3. 实验结果</a>
+<a class="toc-l2" href="#3-1-实验设置">3.1 实验设置</a>
+<a class="toc-l2" href="#3-2-语言建模与常识推理">3.2 语言建模与常识推理</a>
+<a class="toc-l2" href="#3-6-语言任务与长上下文任务要一起看">3.6 语言任务与长上下文任务要一起看</a>
+<a class="toc-l2" href="#3-7-吞吐图的边界">3.7 吞吐图的边界</a>
+<a class="toc-l2" href="#3-8-读表顺序">3.8 读表顺序</a>
+<a class="toc-l2" href="#3-9-消融该怎么看">3.9 消融该怎么看</a>
+<a class="toc-l1" href="#4-总结">4. 总结</a>
+<a class="toc-l2" href="#4-1-我的判断">4.1 我的判断</a>
+<a class="toc-l2" href="#4-2-工程启发与复现建议">4.2 工程启发与复现建议</a>
+<a class="toc-l2" href="#4-3-局限与后续跟进">4.3 局限与后续跟进</a>
+<a class="toc-l2" href="#4-4-我会如何复现">4.4 我会如何复现</a>
+<a class="toc-l2" href="#4-5-后续问题">4.5 后续问题</a>
+<a class="toc-l2" href="#4-6-后续观察清单">4.6 后续观察清单</a></aside><article class="markdown-body paper-content"><p>这里重写精读 NVIDIA 的《Gated DeltaNet-2: Decoupling Erase and Write in Linear Attention》。论文入口：<a href="https://arxiv.org/abs/2605.22791">arXiv:2605.22791</a>。作者为 Ali Hatamizadeh、Yejin Choi、Jan Kautz，机构 NVIDIA。代码仓库本轮可访问：https://github.com/NVlabs/GatedDeltaNet-2。本文关注 recurrent linear attention 的状态更新，核心是把 erase gate 和 write gate 解耦，让固定大小记忆更稳定地编辑旧信息并写入新信息。</p>
+<h2 id="1-背景和问题">1. 背景和问题</h2>
+<p>长上下文大模型的主流方案仍然依赖 softmax attention 和 KV cache，但上下文长度增加会带来训练和推理成本上升。线性注意力、状态空间模型和 recurrent attention 试图用固定大小状态替代随序列增长的 attention matrix，从而让长序列吞吐更稳定。问题是，固定状态本质上是一种压缩记忆：模型必须决定哪些旧关联应该被擦除，哪些新信息应该写入。如果状态更新不够精细，模型要么忘得太快，要么新旧信息互相覆盖。 DeltaNet 和 Gated DeltaNet 属于 fast-weight / linear attention 路线。它们把历史 key-value 关联写入一个状态矩阵，后续 token 通过 query 从状态中读取信息。已有 delta rule 通常用一个 gate 同时控制 erase 和 write，这在直觉上并不合理：擦除旧 key-side association 和写入新 value-side content 是两个不同动作。比如当前 token 可能需要强烈擦除某些旧关联，但只写入少量新值；也可能需要保留旧关联，同时写入补充信息。用一个 scalar gate 同时控制二者，会限制状态编辑能力。 Gated DeltaNet-2 的核心问题就是这个耦合。论文提出 Gated Delta Rule-2，用 channel-wise erase gate $b_t$ 和 channel-wise write gate $w_t$ 分别控制两个动作。它还结合 KDA 的 channel-wise decay，并推导 chunkwise WY algorithm 和 gate-aware backward pass，让训练仍然可以并行。这个工作不是 KV cache 压缩，也不是简单换一个长上下文 benchmark，而是改 recurrent linear attention 的基本状态更新算子。 对推荐系统也可以类比理解。用户序列建模里常有“旧兴趣擦除”和“新兴趣写入”：用户临时看了某类内容，不代表长期兴趣全部改变；用户长期偏好也不应被一次点击完全覆盖。如果序列模型用单一门控同时控制忘记和写入，就可能出现兴趣漂移。Gated DeltaNet-2 虽然是 LLM 架构论文，但它提出的 erase/write 解耦思想对序列推荐和长行为建模也有启发。</p>
+<p>线性注意力路线常被概括为“复杂度更低”，但真正难点是记忆质量。固定大小状态意味着所有历史都被压缩进有限矩阵，长序列越长，冲突越多。Softmax attention 虽然贵，但它保留显式 token-token 关系；recurrent linear attention 便宜，却必须持续编辑同一个状态。Gated DeltaNet-2 的贡献应该放在这个背景下看：它不是把复杂度从二次降到线性这么简单，而是在问固定状态如何更像可控记忆。 这种问题在长上下文推理中非常具体。Needle-in-a-haystack、多键检索、长文 QA 都要求模型在大量干扰信息中保留少量关键关联。如果写入新 token 时覆盖旧 key，模型会忘记早期 needle；如果擦除太弱，状态会积累噪声。解耦 erase/write 是对这个矛盾的直接回应。</p>
+<p>补充背景：这篇论文处在一个很明确的张力里：Transformer 的 KV cache 能精确保留上下文，但长序列成本高；线性注意力和 recurrent 模型能固定状态推理，但容易丢失或覆盖细节。Gated DeltaNet-2 不是简单声称“线性注意力替代 Transformer”，而是把问题缩小到状态更新规则：当一个新 token 到来时，模型到底应该擦除旧关联、写入新关联，还是同时做两件事。把这个动作拆开，是它相对一代 Gated DeltaNet 的关键变化。</p>
+<h2 id="2-方法">2. 方法</h2>
+<h3 id="2-1-从-delta-rule-到-gated-delta-rule-2">2.1 从 Delta Rule 到 Gated Delta Rule-2</h3>
+<p>在线性注意力视角下，模型维护一个状态 $S_t$，每个 token 提供 key $k_t$、value $v_t$ 和 query $q_t$。读取可以抽象为 $o_t=q_t^\top S_{t-1}$，写入则更新 $S_t$。Delta rule 的思想是根据当前 key 读出的旧值与目标 value 之间的差，修正状态。Gated DeltaNet-2 的改动在于把修正动作拆成 erase 与 write 两部分，分别由 channel-wise gate 控制。 公式清单包括以下核心项。读取旧值：$\bar{v}_t=S_{t-1}k_t$。擦除项由 $b_t$ 控制，可理解为沿 key 方向删除旧关联；写入项由 $w_t$ 控制，可理解为把新的 value residual 写回状态。整体更新可以抽象成 $S_t = S_{t-1} - erase(b_t,k_t,\bar{v}_t) + write(w_t,k_t,v_t)$。论文具体公式更严谨，但直觉就是：不要让一个 gate 同时决定“旧内容删多少”和“新内容写多少”。</p>
+<h3 id="2-2-结构图-hybrid-block-和-token-mixer">2.2 结构图：hybrid block 和 token mixer</h3>
+<p><img alt="Figure 1：Gated DeltaNet-2 架构与 block design" src="../assets/images/gated-deltanet-2/1.jpg" /></p>
+<p>Figure 1 左侧展示 Hybrid Gated DeltaNet-2：模型可以在 MLP、SWA 和 Gated DeltaNet-2 token mixer 之间组合；右侧展示 block design，Gated Delta Rule-2 位于 Norm 和 Linear 投影之间，并显式产生 erase/write 相关路径。图中最重要的是两个层次：架构层面，recurrent mixer 负责长程压缩，sliding-window attention 负责局部精确交互；算子层面，状态更新不再用一个统一 gate，而是把 key-side erase 与 value-side write 分开。这个结构解释了为什么它既能追求固定状态吞吐，又没有完全放弃局部 attention 的精确性。</p>
+<h3 id="2-3-channel-wise-gate-为什么重要">2.3 Channel-wise gate 为什么重要</h3>
+<p>如果 gate 是 scalar，整个 channel group 同时被同等强度地擦除或写入，表达能力有限。Channel-wise gate 允许不同维度选择不同遗忘和写入强度。对于语言序列，某些维度可能对应实体、位置、句法或局部模式，不同维度的生命周期并不相同。Gated DeltaNet-2 让 $b_t$ 与 $w_t$ 都是 channel-wise，从而更细粒度地控制记忆状态。这也解释了论文在消融中比较 scalar gate、不同 erase range 和不同 hybrid 配置。若把 gate 压回 scalar，模型可能在多键检索或长程依赖上退化；若 erase 过强，会破坏旧信息；若 write 过弱，新 token 无法进入状态。Gated DeltaNet-2 的收益来自状态编辑更像“可控写缓存”，而不是一味扩大状态维度。</p>
+<h3 id="2-4-chunkwise-wy-与并行训练">2.4 Chunkwise WY 与并行训练</h3>
+<p>Recurrent 结构容易推理高效，但训练并行性是难点。如果每个 token 状态都必须严格依赖前一个 token，长序列训练会变慢。论文因此推导 chunkwise WY algorithm，把一段 token 的更新合并成可并行计算的矩阵形式。Gate-aware backward pass 则保证 erase/write gate 的梯度能正确传播。这个部分很工程，但决定方法能否在 100B tokens 级别预训练。</p>
+<p>从系统角度看，Gated DeltaNet-2 的目标不是做一个 toy recurrent layer，而是让 recurrent linear attention 能进入真实 LLM 训练。它在 1.3B 模型、100B FineWeb-Edu tokens 上比较多种架构，说明作者关注的是可训练性和吞吐，而不只是理论复杂度。对后续复现者，真正难点也在这里：公式可读，训练 kernel、chunking、backward 和 serving 支持才是门槛。</p>
+<h3 id="2-5-hybrid-with-sliding-window-attention">2.5 Hybrid with sliding-window attention</h3>
+<p>论文并没有声称 recurrent mixer 可以完全替代 attention。Hybrid block 中交替使用 SWA，说明局部精确 token-token interaction 仍然重要。Recurrent state 擅长长程压缩和固定成本记忆，但对精确复制、局部语法和短距离组合，SWA 仍有优势。因此 Gated DeltaNet-2 更像一种 hybrid long-context architecture：用 recurrent mixer 控制全局成本，用 SWA 保留局部细节。 这个判断对长上下文模型很重要。单纯追求线性复杂度可能牺牲精确检索；单纯扩大 attention window 又成本太高。Gated DeltaNet-2 的路线是在状态更新算子上提高记忆质量，再和局部 attention 组合。它与 ArborKV、KV cache compression 不同：后者是在已有 transformer cache 上做管理，本文是在模型结构内部改变记忆写入机制。</p>
+<h3 id="2-6-fast-weight-view">2.6 Fast-weight view</h3>
+<p>从 fast-weight 角度看，状态矩阵 $S_t$ 像一个可微记忆表，key 是地址，value 是内容。普通 delta rule 用当前 key 读旧值，再把旧值和目标值的差写入。Gated DeltaNet-2 把这个过程拆成两个门控动作：先决定沿当前 key 应该擦除哪些旧内容，再决定新 value 的哪些通道应该写入。这比单 gate 更接近真实内存编辑。</p>
+<h3 id="2-7-erase-gate-的作用">2.7 Erase gate 的作用</h3>
+<p>Erase gate $b_t$ 不是普通遗忘门。它作用在 key-side association 上，决定旧状态中与当前 key 相关的部分是否应被移除。如果当前 token 修正了前文实体或引入新的上下文，erase 可以防止旧关联继续影响后续读取。Channel-wise erase 允许模型只清理部分维度，而不是整体清空。</p>
+<h3 id="2-8-write-gate-的作用">2.8 Write gate 的作用</h3>
+<p>Write gate $w_t$ 控制 value-side 新信息写入量。即使需要擦除旧关联，也不一定要大量写入新值；反过来，保留旧状态时也可能需要写入补充特征。把 write 独立出来能减少过度覆盖。对于语言模型，某些 token 只是连接词，不应强写记忆；某些实体、数字或指令则需要强写。</p>
+<h3 id="2-9-与-kda-mamba-的关系">2.9 与 KDA / Mamba 的关系</h3>
+<p>KDA 引入 channel-wise decay，Mamba 系列强调选择性状态空间。Gated DeltaNet-2 与它们共享“状态应选择性更新”的思想，但具体落在 linear attention fast-weight update 上。它不是卷积或 SSM，而是保留 key-value 关联读写视角。因此它更容易和 attention 概念对齐，也更适合解释多键检索。</p>
+<h3 id="2-10-hybrid-block-的取舍">2.10 Hybrid block 的取舍</h3>
+<p>SWA 的存在说明作者没有把 recurrent state 神化。局部 token 交互仍然需要精确 attention，尤其是语法、短距离引用和格式化输出。Hybrid block 把长程记忆和局部细节分工：Gated DeltaNet-2 负责长距离压缩，SWA 负责窗口内精确匹配。这个分工比纯 linear attention 更现实。</p>
+<h3 id="2-11-训练-kernel-与复现门槛">2.11 训练 kernel 与复现门槛</h3>
+<p>Chunkwise WY 和 gate-aware backward 是实现核心。若只按公式逐 token 循环，训练效率无法与 Transformer 比较；若 backward 没处理 gate 依赖，训练不稳定。复现者需要关注 CUDA/Triton kernel、chunk size、数值稳定性、归一化位置和混合精度。论文开源仓库可访问，这是后续验证的重要入口。</p>
+<h3 id="2-12-公式审计-状态编辑比状态大小更重要">2.12 公式审计：状态编辑比状态大小更重要</h3>
+<p>这篇论文的核心公式不是单个 attention score，而是 fast-weight state 的读写。读取可以写成 $o_t=q_t^\topop S_{t-1}$，旧 value 估计可以写成 $ar{v}_t=S_{t-1}k_t$，更新则围绕“旧关联删除”和“新残差写入”展开。重要之处在于，erase gate 与 write gate 不共享同一个控制量：$b_t$ 更像 key-side 的清理强度，$w_t$ 更像 value-side 的写入强度。这样模型可以做“只擦不写”“只写不擦”或“部分擦、部分写”。</p>
+<p>从记忆角度看，固定状态模型失败常常不是状态维度太小，而是状态编辑过粗。单 gate 更新会把“当前 token 是否重要”和“旧内容是否应该删除”混成一个动作。Gated DeltaNet-2 把两个动作拆开后，多键检索任务更容易保留多个 key-value association。这个解释也说明为什么论文必须看 RULER multi-key，而不能只看困惑度。</p>
+<h3 id="2-13-训练并行性的真正门槛">2.13 训练并行性的真正门槛</h3>
+<p>Recurrent 结构在推理时天然顺序，但训练时若逐 token 循环，就很难和 Transformer 公平比较。论文的 chunkwise WY 和 gate-aware backward 解决的是这个门槛：把一段 token 的状态更新组织成可并行矩阵运算，同时在反向传播中正确处理 gate 对状态的影响。没有这个 kernel 层实现，公式上再漂亮也无法支撑 100B token 预训练。</p>
+<p>复现者需要把“架构论文”和“系统实现”一起读。若只照着公式写 PyTorch for-loop，得到的吞吐结论没有意义；若只看 CUDA kernel 又不理解 erase/write 的语义，调参时很难定位性能变化。本文的工程价值正来自两者结合：状态规则更细，训练实现也足够接近生产形态。</p>
+<h3 id="2-14-推荐序列建模的迁移点">2.14 推荐序列建模的迁移点</h3>
+<p>对推荐系统来说，用户兴趣状态也存在 erase/write 问题。用户看了一个新类目，并不总是要覆盖旧兴趣；用户明确负反馈某个主题时，可能需要擦除关联但不写入新偏好；短期热点可能需要强写但快速衰减。Gated DeltaNet-2 的思想可以迁移为用户状态更新模块：把“删除旧兴趣”和“写入新兴趣”拆成不同 gate，并按行为类型、时间间隔和上下文控制。</p>
+<p>当然，推荐序列的监督信号和语言建模不同。语言模型每个 token 都有 next-token loss，推荐里曝光偏差和延迟反馈很重。迁移时应先做离线用户序列预测或召回实验，检查多兴趣保留、兴趣转移和负反馈消除，而不是直接替换线上排序主干。</p>
+<h2 id="3-实验结果">3. 实验结果</h2>
+<h3 id="3-1-实验设置">3.1 实验设置</h3>
+<p>论文训练 1.3B 模型，数据为 100B FineWeb-Edu tokens。比较对象包括 Mamba-2、Gated DeltaNet、KDA、Mamba-3、Transformer/hybrid variants 等。评估覆盖语言建模、常识推理、RULER needle-in-a-haystack、多键检索、真实检索任务和吞吐。这个设置能同时回答三件事：模型质量是否足够、长上下文记忆是否改善、效率是否保留。</p>
+<h3 id="3-2-语言建模与常识推理">3.2 语言建模与常识推理</h3>
+<p><img alt="Table 2：语言建模和常识推理结果" src="../assets/images/gated-deltanet-2/2.jpg" /></p>
+<p>Table 2 现在单独裁出，不再与 RULER 表合在一起。表中比较 Pile、LAMBADA、PIQA、WinoGrande、ARC、HellaSwag 等指标。Gated DeltaNet-2 在平均表现上领先或接近最强，说明 erase/write 解耦没有只优化某个长上下文测试，而是在普通语言建模和常识推理上也保持竞争力。对于新架构论文，这一点很关键：如果长上下文提升是以普通任务显著退化为代价，工程价值会下降。表中多个任务共同出现，也能防止只挑单一长上下文指标讲故事；读者应同时关注平均值和弱项任务，确认模型没有用牺牲常识推理换取记忆任务分数。</p>
+<p>这张图表还要和 erase/write 解耦的主张合看：它验证的不是某个单点分数，而是固定状态模型在普通能力、长程记忆和吞吐之间能否同时站住。### 3.3 RULER 与多键检索</p>
+<p><img alt="Table 3：RULER NIAH 多键检索结果" src="../assets/images/gated-deltanet-2/4.jpg" /></p>
+<p>Table 3 单独呈现 RULER needle-in-a-haystack 相关结果，尤其是多键检索。这里最能体现 erase/write 解耦价值：固定状态模型必须在长序列中保留多个 key-value 关联，如果写入新信息时覆盖旧 key，或者擦除不够精确，多键 retrieval 会失败。Gated DeltaNet-2 在这类任务上优势更明显，说明它改善的是状态记忆质量，而不只是平均困惑度。尤其多键检索要求模型同时保留多个地址和值，最容易暴露单 gate 更新的覆盖问题；因此这张表比普通 perplexity 更能检验 erase/write 解耦是否真的有效。</p>
+<p>这张图表还要和 erase/write 解耦的主张合看：它验证的不是某个单点分数，而是固定状态模型在普通能力、长程记忆和吞吐之间能否同时站住。### 3.4 吞吐与效率</p>
+<p><img alt="Figure 2：H100 训练吞吐随序列长度变化" src="../assets/images/gated-deltanet-2/3.jpg" /></p>
+<p>Figure 2 已重裁为单独吞吐曲线，不再包含正文段落和 caption。图中横轴为序列长度，纵轴为 single H100 training throughput。Transformer 随长度增加吞吐下降更明显，而 Gated DeltaNet-2 类 recurrent/hybrid 模型保持更平缓。这是 fixed-state linear attention 的核心工程卖点：长上下文成本不随序列长度二次增长。结合前两张表看，Gated DeltaNet-2 的价值在于没有把效率和质量完全对立起来。</p>
+<p>这张图表还要和 erase/write 解耦的主张合看：它验证的不是某个单点分数，而是固定状态模型在普通能力、长程记忆和吞吐之间能否同时站住。### 3.5 消融与边界</p>
+<p>消融说明 gate 形式、erase range 和 hybrid 配置都会影响结果。把 gate 压成 scalar 或改变擦除范围会削弱性能，支持作者关于 erase/write 解耦的判断。不过实验规模仍是 1.3B 与 100B tokens，距离更大 dense/MoE 模型还有差距。另一个边界是 serving 生态：Transformer 有成熟 KV cache、FlashAttention、vLLM/SGLang 支持，而 recurrent linear attention 需要新的 kernel 和 runtime。即使论文代码可访问，生产部署仍要看推理框架是否跟进。</p>
+<h3 id="3-6-语言任务与长上下文任务要一起看">3.6 语言任务与长上下文任务要一起看</h3>
+<p>如果一个架构只在 RULER 强，但普通语言建模差，说明它可能只是对特定合成任务过拟合。Gated DeltaNet-2 同时给出 Pile/LAMBADA/常识推理和 RULER，读法更完整。Table 2 证明基础能力，Table 3 证明长程记忆，Figure 2 证明效率。三者缺一不可。</p>
+<h3 id="3-7-吞吐图的边界">3.7 吞吐图的边界</h3>
+<p>吞吐图显示 recurrent/hybrid 架构在长序列下更平缓，但训练吞吐不等于端到端 serving 成本。真实推理还涉及 batch、prefill、decode、KV 或 recurrent state 管理、框架支持。若 serving 框架不支持高效 recurrent state，理论效率可能无法兑现。因此后续要看 vLLM、SGLang 或专用 runtime 是否跟进。</p>
+<h3 id="3-8-读表顺序">3.8 读表顺序</h3>
+<p>我会按 Table 2、Table 3、Figure 2 的顺序读实验。Table 2 说明新架构没有牺牲普通语言建模和常识推理；Table 3 说明它在长上下文、多键检索上确实改善固定状态记忆；Figure 2 再说明这种改善没有用明显吞吐损失换来。若只看其中一个表，都可能误判：长上下文强但普通任务弱，不适合作为通用 LLM backbone；吞吐强但质量差，只是系统技巧；质量强但吞吐差，则失去 linear attention 的意义。</p>
+<h3 id="3-9-消融该怎么看">3.9 消融该怎么看</h3>
+<p>消融中最值得看的是 gate 粒度和 hybrid 配置。若把 channel-wise gate 简化成 scalar，模型会失去按维度编辑状态的能力；若移除 SWA，局部精确匹配会变弱；若改变 erase range，多键检索会直接受影响。这些消融指向同一个结论：Gated DeltaNet-2 的收益不是来自参数量或训练数据，而是来自状态更新结构。后续若有更大模型结果，也应继续要求同样的消融，否则很难确认机制是否还成立。</p>
+<h2 id="4-总结">4. 总结</h2>
+<h3 id="4-1-我的判断">4.1 我的判断</h3>
+<p>Gated DeltaNet-2 的关键贡献是把固定状态记忆中的“擦除”和“写入”拆开。它不像 KV cache 剪枝那样事后管理缓存，而是在模型更新规则中提升记忆编辑能力。对长上下文 LLM，这是一个值得跟踪的架构方向。</p>
+<h3 id="4-2-工程启发与复现建议">4.2 工程启发与复现建议</h3>
+<p>复现应先读 NVlabs 仓库中的 gate-aware backward、chunkwise WY 和 block 配置，再比较相同 tokenizer、数据和训练预算下的 Mamba-3/KDA/Transformer hybrid。不要只跑 RULER；还要跑普通语言建模、常识推理、长文 QA 和真实检索任务。若用于推荐序列建模，可以尝试把用户兴趣状态的遗忘和写入分开建模。</p>
+<h3 id="4-3-局限与后续跟进">4.3 局限与后续跟进</h3>
+<p>局限包括：规模尚未证明到更大模型；精确复制能力仍需 SWA 辅助；训练复现成本高；serving 支持不成熟。后续应关注更大模型结果、与 Kimi Linear/Mamba-3 的公平比较、推理框架支持，以及该 erase/write 机制是否能迁移到用户行为序列或长期记忆模块。</p>
+<h3 id="4-4-我会如何复现">4.4 我会如何复现</h3>
+<p>我会先用仓库跑小规模 sanity check：同一数据、同一 tokenizer 下比较 Gated DeltaNet、KDA、Gated DeltaNet-2；再单独替换 erase/write gate 看 RULER 多键任务变化；最后测不同序列长度的吞吐。只有同时复现质量和效率，才算验证论文主张。</p>
+<h3 id="4-5-后续问题">4.5 后续问题</h3>
+<p>需要跟踪更大模型、MoE 版本、真实长文 QA、代码任务、serving kernel 和与 Kimi Linear/Mamba-3 的公平对比。如果这些结果成立，erase/write 解耦可能成为 recurrent linear attention 的标准组件。</p>
+<h3 id="4-6-后续观察清单">4.6 后续观察清单</h3>
+<p>后续最值得看的是三件事：更大规模模型是否仍然保持质量与吞吐平衡；vLLM、SGLang 或专用 runtime 是否支持高效 recurrent state serving；erase/write 解耦是否能迁移到非语言序列，例如用户行为、代码执行轨迹和长期 Agent memory。若这三点都成立，它就不只是一个长上下文 benchmark 技巧，而可能成为固定状态模型的标准更新单元。</p></article></div>
     </main>
     <footer class="site-footer"><div class="page-shell"><span>© 2026 liuzhao09. Paper notes.</span><a class="text-link" href="../papers.html">返回论文库</a></div></footer>
   </body>
