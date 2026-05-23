@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>VPO 解读 | liuzhao09</title>
+    <meta name="description" content="Vector Policy Optimization: Training for Diversity Improves Test-Time Search 论文精读笔记">
+    <link rel="stylesheet" href="../assets/css/site.css">
+  </head>
+  <body>
+    <header class="site-header"><nav class="nav" aria-label="主导航"><a class="brand" href="../index.html"><span class="brand-mark">LZ</span><span>liuzhao09</span></a><div class="nav-links"><a href="../index.html">首页</a><a href="../papers.html">论文库</a></div></nav></header>
+    <main class="page-shell paper-shell">
+      <section class="paper-hero"><div><p class="breadcrumb"><a href="../papers.html">论文库</a> / VPO</p><h1 class="paper-title">VPO：Vector Policy Optimization: Training for Diversity Improves Test-Time Search</h1><p class="paper-subtitle">2026-05-23 每日论文精读同步页</p><div class="tag-row"><span class="tag">Paper Note</span><span class="tag">Daily Research</span></div></div></section>
+      <div class="paper-layout"><aside class="paper-toc" aria-label="目录"><p>目录</p><a class="toc-l1" href="#1">1. 背景和问题</a>
+<a class="toc-l1" href="#2">2. 方法</a>
+<a class="toc-l1" href="#3">3. 实验结果</a>
+<a class="toc-l1" href="#4">4. 总结</a>
+<a class="toc-l2" href="#4-1">4.1 我的判断</a>
+<a class="toc-l2" href="#4-2">4.2 工程启发与复现建议</a>
+<a class="toc-l2" href="#4-3">4.3 局限与后续跟进</a></aside><article class="markdown-body paper-content"><p>这里精读一篇 2026-05-21 submitted 公开的论文《Vector Policy Optimization: Training for Diversity Improves Test-Time Search》。中文可译为《向量策略优化：为测试时搜索保留多样性》。论文链接：<a href="https://arxiv.org/abs/2605.22817">arXiv:2605.22817</a>。作者为 Ryan Bahlous-Boldi, Isha Puri, Idan Shenfeld, Akarsh Kumar, Mehul Damani, Sebastian Risi, Omar Khattab, Zhang-Wei Hong, Pulkit Agrawal；机构/团队记录为 MIT；Improbable AI Lab；MIT-IBM Computing Research Lab；Sakana AI。代码/项目页状态：论文参考 OpenEvolve 项目线索；本轮未核验到 VPO 独立仓库。</p>
+<h2 id="1">1. 背景和问题</h2>
+<p>GRPO、RLVR、DPO 等后训练通常围绕一个标量 reward 优化，结果是模型把概率质量集中到少数高奖励模式上。单次回答时这可能有利，但当系统运行 test-time search、采样多个候选再用 verifier/任务奖励选择时，候选塌缩会伤害上限。VPO 的观点是：如果 exploitation 已经交给测试时搜索，训练阶段应该更关注 exploration 和 diversity，让模型一次输出多种有竞争力的解。</p>
+<p><img alt="Figure 1：标量 RL 与 VPO 候选集合对比" src="../assets/images/vpo/1.jpg" /></p>
+<p>Figure 1 展示 VPO 的核心动机。标量 GRPO 会把候选推向单一方向，模型采样出来的多个解趋于重复；VPO 让候选覆盖不同 reward trade-off，于是 test-time search 可以从更宽的候选池中选择。这里的“多样性”不是风格多样，而是任务目标空间里的功能多样。</p>
+<p>这篇论文放在今天的调研里，主要因为它把一个热门概念落到了具体链路。它把 RL 后训练的目标从“单个标量奖励最大化”改成“为未来 test-time search 生成一组高质量且互补的候选”。在 AlphaEvolve、best@k、pass@k 逐渐常态化后，这个问题非常核心。 如果只看标题，很容易把它理解成又一篇泛泛使用 LLM 或推荐系统的工作；但从原文的任务设定、图表和实验看，它真正关心的是系统中哪一个环节最脆弱、哪一个中间表示最需要被重新设计。对工程读者来说，先厘清这个问题，比记住模型名更重要。</p>
+<h2 id="2">2. 方法</h2>
+<p>VPO 假设很多任务的 reward 本来就是向量：代码题可以按 test case 得分，推荐或个性化任务可以按多 persona、多个 reward model 或多个约束评分。模型一次生成 m 个答案，每个答案得到 reward vector；训练时从 Dirichlet 分布采样多个权重，把不同答案映射到不同 scalarization。优势估计不再只奖励同一个最优方向，而是鼓励候选集合覆盖 reward space 中不同 trade-off。它可以看作 GRPO advantage estimator 的替代件，目标是让同一 prompt 下的候选彼此专业化。</p>
+<p><img alt="Figure 2：VPO 多目标训练流程" src="../assets/images/vpo/2.jpg" /></p>
+<p>Figure 2 把 VPO 流程拆开：模型一次生成多个答案，每个答案得到 reward vector；训练时采样多个权重向量，对候选集合做不同 scalarization，再用这些结果构造优势估计。与 GRPO 的关键差别在于，VPO 不要求所有答案都朝同一个标量最优点移动，而是让不同答案学习不同目标组合。</p>
+<p>方法上可以把它拆成三层理解。第一层是输入输出边界：模型或系统到底读什么、产出什么、产物是否能直接进入下游链路。第二层是训练或优化信号：论文使用的是监督、强化、合成标签、结构约束还是运行时验证。第三层是部署边界：高成本模块是否在线、是否可缓存、是否有回滚与审计、是否会影响已有召回/排序/推理服务。沿这三层看，论文的贡献就不会只停留在“用了 LLM”或“加了一个模块”。</p>
+<p>对比已有方法，本文的共同特点是把自由度收窄到可验证形式。Airbnb 把 LLM 合成限制在 listing pair 和 seed language 上；GCRS/ThinkGR 把生成约束到 semantic ID 或 docid；VPO 把多样性定义到 reward vector；Gated DeltaNet-2 把长期记忆压进可训练的 erase/write state update；MOSS 则把源码改写放进 trial worker 和 verdict pipeline。这样的设计比完全开放的生成更不浪漫，但更接近可落地系统。</p>
+<h2 id="3">3. 实验结果</h2>
+<p>实验覆盖 Maze、MuSiQue、EUREQA、ToolRL 等四类任务，指标关注 best@k、pass@k 和 diversity。结果显示，单次 pass@1 场景下标量 GRPO 往往更强，因为它专注优化一个答案；但一旦给 test-time search 预算，VPO 随 k 增长持续提升，而 GRPO 很快 plateau。MuSiQue 和 Maze 表格说明，VPO 在较小 rollout 数下就超过给 GRPO/GDPO 三倍 compute 的变体，说明收益不是简单采样更多，而是候选集合的 reward-space 覆盖更好。</p>
+<p><img alt="Table 1-2：MuSiQue 与 Maze 的 best@k 结果" src="../assets/images/vpo/3.jpg" /></p>
+<p>Table 1-2 显示，当 k 增大时，VPO 的 best@k 持续受益，而标量 RL 方法较快进入平台期。这个现象支持论文的训练/推理分工观点：如果后续有搜索或 verifier，训练阶段不必把策略压到单一模式；保留一组有能力但互补的候选，反而能提高系统上限。</p>
+<p>实验解读时我更关注三个问题。第一，指标是否和论文主张一致：例如冷启动搜索不能只看生成文本质量，必须看检索/排序样本是否有区分度；后训练多样性不能只看单次 pass@1，还要看 best@k。第二，消融是否真的切中了核心机制：去掉 seed、去掉 structured generation、去掉 hybrid decoding、合并 erase/write gate 或删除验证回放，应该能解释主要退化。第三，实验是否给出工程成本信号：延迟、token cost、吞吐、代码可用性、线上部署形态或回滚机制，决定它能否从论文进入系统。</p>
+<p>这篇论文的证据整体是有价值的，但不能过度外推。公开 benchmark、预印本实验和工业摘要都只能证明某个受控条件下的收益；真实推荐/搜索/Agent/LLM serving 系统还会受到流量分布、库存变化、硬件、权限、隐私、灰度策略和监控口径影响。因此这份笔记把实验当作“方向证据”，不把它写成确定性工程结论。</p>
+<h2 id="4">4. 总结</h2>
+<p>对 LLM 后训练，它提示“多样性”不只是文本表面多样，而是 reward vector 上的功能多样。对推荐系统，它和多目标排序很像：不同用户、业务约束、长期/短期指标天然形成向量奖励，训练一个只会优化单一 scalar 的模型可能不适合后续重排或策略搜索。</p>
+<h3 id="4-1">4.1 我的判断</h3>
+<p>我认为这篇论文最值得保留的不是单个指标，而是它对系统边界的处理。它没有把所有问题都交给一个更大的模型，而是明确哪些信号要生成、哪些信号要约束、哪些信号要留给下游检索/排序/验证/推理框架。这个思路对于后续做推荐系统和大模型交叉非常重要：LLM 的能力要变成系统收益，必须经过候选空间、约束解码、reward、缓存、回放或人审这些接口。</p>
+<h3 id="4-2">4.2 工程启发与复现建议</h3>
+<p>第一，复现时不要从完整系统开始，应先复现最小闭环：输入、约束、指标和一个可替换 baseline。第二，所有生成中间产物都要保留可追溯来源，尤其是合成 query、CoT、semantic ID、docid、reward vector 或自改写 patch。第三，线上前要设置反事实检查：去掉 LLM 信号、打乱中间表示、降低刷新频率或替换 reward，看指标是否仍然成立。第四，要把成本作为一等指标，包含 token、GPU、延迟、工程复杂度和出错后的回滚成本。</p>
+<h3 id="4-3">4.3 局限与后续跟进</h3>
+<p>局限主要有四点：VPO 假设 reward vector 可得，很多真实任务只有稀疏或延迟反馈，构造多目标 reward 本身很难。；它更适合有 test-time search 的系统，单次低延迟回答或在线排序可能无法承担多候选成本。；多样性提升可能带来安全和一致性风险，需要 verifier 或策略层过滤。；实验虽覆盖多任务，但距离大规模生产 LLM 后训练仍有工程差距。。这些局限并不否定论文价值，但决定了它适合先作为研究原型或局部链路增强，而不是直接替换既有生产系统。</p>
+<p>后续跟进建议：跟踪是否开源 VPO 训练代码和 reward-vector 数据构造。；在 RAG/Agent 场景中测试 VPO 候选集合是否改善 verifier 选择。；把多目标推荐 reward 映射到 VPO 思路，观察多样候选是否帮助后续重排。。本轮自动化已经下载 PDF、裁剪关键图表并生成本地笔记；如果本笔记字符数低于 10000，是因为本轮只保留了已在 PDF、arXiv 页面或可访问链接中核验的事实，没有为满足字数硬补未核验实现细节。</p></article></div>
+    </main>
+    <footer class="site-footer"><div class="page-shell"><span>© 2026 liuzhao09. Paper notes.</span><a class="text-link" href="../papers.html">返回论文库</a></div></footer>
+  </body>
+</html>
