@@ -12,25 +12,17 @@
   <body>
     <header class="site-header"><nav class="nav" aria-label="主导航"><a class="brand" href="../index.html"><span class="brand-mark">LZ</span><span>liuzhao09</span></a><div class="nav-links"><a href="../index.html">首页</a><a href="../papers.html">论文库</a></div></nav></header>
     <main class="page-shell paper-shell">
-      <section class="paper-hero"><div><p class="breadcrumb"><a href="../papers.html">论文库</a> / moss-self-evolution</p><h1 class="paper-title">MOSS：源码级自演化 Agent 的验证与回滚边界</h1><p class="paper-subtitle">2026-05-23 重构版每日论文精读同步页</p><div class="tag-row"><span class="tag">Paper Note</span><span class="tag">Rebuilt</span></div></div></section>
+      <section class="paper-hero"><div><p class="breadcrumb"><a href="../papers.html">论文库</a> / moss-self-evolution</p><h1 class="paper-title">MOSS：源码级自演化 Agent 的验证与回滚边界</h1><p class="paper-subtitle">2026-05-23 结构优化版每日论文精读同步页</p><div class="tag-row"><span class="tag">Paper Note</span><span class="tag">Rebuilt</span></div></div></section>
       <div class="paper-layout"><aside class="paper-toc" aria-label="目录"><p>目录</p><a class="toc-l1" href="#1-背景和问题">1. 背景和问题</a>
 <a class="toc-l1" href="#2-方法">2. 方法</a>
-<a class="toc-l2" href="#2-1-可变对象与不变量">2.1 可变对象与不变量</a>
-<a class="toc-l2" href="#2-2-host-side-topology">2.2 Host-side topology</a>
-<a class="toc-l2" href="#2-4-trial-worker-user-consent-与-rollback">2.4 Trial worker、user consent 与 rollback</a>
-<a class="toc-l2" href="#2-5-和普通自动修复的区别">2.5 和普通自动修复的区别</a>
-<a class="toc-l2" href="#2-6-evidence-batch-的作用">2.6 Evidence batch 的作用</a>
-<a class="toc-l2" href="#2-7-review-gate-的意义">2.7 Review gate 的意义</a>
-<a class="toc-l2" href="#2-8-build-与-trial-的分离">2.8 Build 与 trial 的分离</a>
-<a class="toc-l2" href="#2-9-verdict-的设计">2.9 Verdict 的设计</a>
-<a class="toc-l2" href="#2-10-rollback-不是失败补丁">2.10 Rollback 不是失败补丁</a>
-<a class="toc-l2" href="#2-11-安全与审计日志">2.11 安全与审计日志</a>
-<a class="toc-l2" href="#2-12-公式审计-这是一篇协议论文而非优化公式论文">2.12 公式审计：这是一篇协议论文而非优化公式论文</a>
-<a class="toc-l2" href="#2-13-不变量清单">2.13 不变量清单</a>
-<a class="toc-l2" href="#2-14-可以借鉴到自动化流水线的部分">2.14 可以借鉴到自动化流水线的部分</a>
+<a class="toc-l2" href="#2-1-editable-harness-scope-可变对象和不变量">2.1 Editable harness scope：可变对象和不变量</a>
+<a class="toc-l2" href="#2-2-evolution-lifecycle-从-failure-batch-到-trial-worker">2.2 Evolution lifecycle：从 failure batch 到 trial worker</a>
+<a class="toc-l2" href="#2-3-verdict-user-consent-和-rollback">2.3 Verdict、user consent 和 rollback</a>
+<a class="toc-l2" href="#2-4-安全边界和可迁移部分">2.4 安全边界和可迁移部分</a>
 <a class="toc-l1" href="#3-实验结果">3. 实验结果</a>
 <a class="toc-l2" href="#3-1-实验设置">3.1 实验设置</a>
 <a class="toc-l2" href="#3-2-主结果">3.2 主结果</a>
+<a class="toc-l2" href="#3-3-trace-与验证闭环">3.3 Trace 与验证闭环</a>
 <a class="toc-l2" href="#3-4-证据边界">3.4 证据边界</a>
 <a class="toc-l2" href="#3-5-如何读这个实验">3.5 如何读这个实验</a>
 <a class="toc-l2" href="#3-6-为什么-table-2-仍有价值">3.6 为什么 Table 2 仍有价值</a>
@@ -53,48 +45,34 @@
 <p>补充背景：MOSS 的风险点比普通代码修复更高，因为它让 Agent 修改的是运行自身的 harness。Prompt、skill 或 memory 的更新通常还停留在行为策略层；source-level rewriting 会触及调度、工具封装、状态管理和回滚逻辑。论文的价值不在于证明模型会写 patch，而在于把“谁能改什么、在哪里验证、怎样推广、失败如何回滚”这些运维边界显式化。旧笔记如果只写“自演化能提升分数”，就会漏掉这篇系统论文最重要的安全前提。</p>
 <p>再补一层背景：这类系统一旦长期运行，风险不是单次 patch 错误，而是多轮小修复逐步改变系统边界。MOSS 因此必须把审计、用户同意和回滚放在问题定义里，而不是作为实现细节。</p>
 <h2 id="2-方法">2. 方法</h2>
-<h3 id="2-1-可变对象与不变量">2.1 可变对象与不变量</h3>
-<p>MOSS 把系统拆成 gateway container、host-daemon、coding-agent CLI 和 trial workers。可变对象主要是候选源码改动；不变量是演化协议本身，包括 stage order、review gates、verdict、promotion、rollback 和 user consent。这个区分很重要：如果连验证器和回滚逻辑都允许模型随意修改，系统就失去安全锚点。MOSS 让 coding-agent CLI 负责生成候选 patch，但 host-daemon 和</p>
-<p>MOSS lifecycle 负责隔离、验证和上线决策。 公式清单方面，本文没有可复用的核心公式。它的技术内容主要是系统协议和状态机，而不是优化目标或模型结构。可以把演化过程抽象为 $evidence \rightarrow patch \rightarrow trial \rightarrow verdict \rightarrow promotion/rollback$，但这只是流程记号，不是论文提出的数学公式。因此方法章重点解释各组件职责、阶段顺序和安全边界。</p>
-<h3 id="2-2-host-side-topology">2.2 Host-side topology</h3>
+<h3 id="2-1-editable-harness-scope-可变对象和不变量">2.1 Editable harness scope：可变对象和不变量</h3>
+<p>MOSS 的方法不是普通自动写代码，而是把 Agent harness 本身纳入可编辑对象。系统中可以变化的是候选 patch、skill、prompt、memory 或部分 harness 源码；不应被候选 patch 自由改写的是 review gate、verdict policy、rollback、审计日志、权限和用户同意流程。这个边界决定了源码级自演化是否可控。</p>
+<p>论文可以用一个协议公式概括：</p>
+<div class="math-block">$$
+evidence \rightarrow locate \rightarrow plan \rightarrow review \rightarrow patch \rightarrow build \rightarrow trial \rightarrow verdict \rightarrow promotion/rollback
+$$</div>
+<p>符号解释：$evidence$ 是失败样本、日志和轨迹；locate/plan 是定位和修复计划；review 是越权和风险检查；patch 是候选源码修改；build 是构建候选环境；trial 是隔离回放；verdict 是是否推广的判定；promotion/rollback 是上线或回退动作。本文没有传统 loss function，这个流程公式就是它的核心方法对象。</p>
 <p><img alt="Figure 1：MOSS host-side topology" src="../assets/images/moss-self-evolution/2.jpg" /></p>
-<p>Figure 1 展示 MOSS 的 host-side 拓扑。Host machine 中有 moss-gateway container，旁边是 host-daemon；coding-agent CLI 和 trial workers 由 host-daemon 拉起或管理。图中可以看到，候选修改不是直接进入生产容器，而是进入 trial worker 回放任务。host-daemon 负责 RPC、swap supervisor、auto-scan 和 ephemeral trial worker 编排。这张图说明 MOSS 的核心安全思路：把“提出修改”和“验证修改”放在不同执行边界内，候选代码必须先在隔离 worker 中证明自己。</p>
-<p>这张图表应服务于 MOSS 的安全边界判断：它说明候选源码修改必须经过隔离、回放、verdict 和回滚，而不是由 agent 直接推广到生产。### 2.3 演化阶段</p>
-<p>论文把演化生命周期显式化为 moss evo CLI。一次演化从生产失败证据 batch 开始，先 locate failure，确定可能出错的模块；再 plan 修改方案；随后通过 review gates 检查计划是否越权或风险过高；实现阶段由 coding-agent 生成 patch；build 阶段构建候选 image；task-evaluate 阶段在 trial workers 中回放失败样本；verdict 阶段根据评分和健康检查决定是否允许 promotion。 这个阶段化设计比“agent 自己改代码”更重要。Locate 阶段避免盲目修改；plan/review 避免大范围重构；build 阶段提前捕获语法和依赖错误；task-evaluate 用失败样本回放判断修复是否有效；verdict 防止单个成功样本直接上线。MOSS 的思想接近自动化 CI/CD，但输入不是普通开发者提交，而是 agent 基于生产证据生成的候选 patch。</p>
-<h3 id="2-4-trial-worker-user-consent-与-rollback">2.4 Trial worker、user consent 与 rollback</h3>
-<p>Trial worker 是隔离验证核心。候选 image 在 trial worker 中运行，回放真实失败任务或合成测试，输出 grader score 或任务结果。只有通过 verdict 的候选才进入下一步。User consent gate 表明</p>
-<p>MOSS 不把源码级自改写完全自动化：对高风险改动，人类仍然要确认。Health-probe-gated rollback 则保证上线后若健康指标异常，可以自动回退。 这套机制对源码级自演化尤其必要。Prompt 或 skill 改坏了，通常只影响某类任务；harness 改坏了，可能影响整个系统入口。MOSS 因此需要明确权限边界：coding-agent 能改哪些目录、不能改哪些守护逻辑；trial worker 能访问哪些数据、不能访问生产密钥；verdict 依据哪些指标、是否允许模型修改判分器。这些边界如果不清晰，自演化会变成供应链风险。</p>
-<h3 id="2-5-和普通自动修复的区别">2.5 和普通自动修复的区别</h3>
-<p>MOSS 与传统自动程序修复不同。传统 APR 通常面对静态 test suite；MOSS 面对的是 Agent 系统运行中的任务失败、交互状态和工具环境。它也不同于普通 CI agent：CI agent 修复的是用户提交代码，MOSS 修复的是 agent harness 自己。这个差异让证据采集和回放更重要，因为失败可能来自工具返回格式、外部服务、并发时序或用户输入分布。这也是为什么论文强调 source-level rewriting。Skill/prompt/memory 能扩展能力，但不能改变 harness 控制流；源码改写可以修调度、状态管理和工具封装，但必须付出验证成本。MOSS 的方法可看作把 Agent 运维问题工程化：先收集失败，再做小步候选修改，再隔离回放，再谨慎推广。</p>
-<h3 id="2-6-evidence-batch-的作用">2.6 Evidence batch 的作用</h3>
-<p>演化从 evidence batch 开始，而不是从模型自由猜测开始。Evidence 应包含失败任务、日志、工具调用轨迹、错误输出和期望行为。没有 evidence，agent 容易做无关重构；有 evidence，locate 阶段才能缩小修改范围。对于源码级自演化，修改范围越小越安全。</p>
-<h3 id="2-7-review-gate-的意义">2.7 Review gate 的意义</h3>
-<p>Review gate 用来检查计划是否越权、是否影响核心安全逻辑、是否缺少测试。它不应由候选 patch 自己控制。一个稳健系统会把 review policy 固定在不可变层，或至少需要人类确认。MOSS 提到 user consent，说明作者意识到源码级修改不能完全交给模型自动推广。</p>
-<h3 id="2-8-build-与-trial-的分离">2.8 Build 与 trial 的分离</h3>
-<p>Build 只证明代码能构建，不证明行为正确；trial worker 才回放任务。把二者分开能定位失败类型：build fail 是语法、依赖或环境问题；trial fail 是行为问题；health probe fail 是上线后环境差异或副作用问题。这个分层和 CI/CD 相似，但</p>
-<p>MOSS 的 trial 更偏任务级 agent 回放。</p>
-<h3 id="2-9-verdict-的设计">2.9 Verdict 的设计</h3>
-<p>Verdict 应综合任务分数、回归测试、风险标签和健康指标。若只看本次失败样本，patch 可能过拟合；若只看静态测试，又可能漏掉真实交互问题。MOSS 的论文没有完全展开 verdict 策略，这是后续系统落地最需要补的部分。一个好的 verdict 应记录为什么通过、哪些风险未覆盖、上线后如何监控。</p>
-<h3 id="2-10-rollback-不是失败补丁">2.10 Rollback 不是失败补丁</h3>
-<p>Rollback 应该是 promotion 的前置条件，而不是出事后的临时方案。候选 patch 上线前就要有可回退版本、健康探针和触发阈值。源码级自改写尤其需要原子替换，避免一半新代码一半旧状态。MOSS 的 swap supervisor 和 health-probe-gated rollback 正是为这个问题服务。</p>
-<h3 id="2-11-安全与审计日志">2.11 安全与审计日志</h3>
-<p>所有候选改动都应留下审计记录：输入 evidence、模型版本、patch diff、review 结果、trial logs、verdict 和用户同意。没有这些记录，就无法追责或分析长期 drift。Agent 自演化的风险不只是一次错误修改，还有多轮小修改累积导致系统偏离初始安全边界。</p>
-<h3 id="2-12-公式审计-这是一篇协议论文而非优化公式论文">2.12 公式审计：这是一篇协议论文而非优化公式论文</h3>
-<p>MOSS 没有可复用的核心数学公式。它的技术内容是 lifecycle protocol，可以抽象为 $evidence \rightarrow locate \rightarrow plan \rightarrow review \rightarrow patch \rightarrow build \rightarrow trial \rightarrow verdict \rightarrow promotion/rollback$。这个记号只是流程表达，不是论文提出的优化目标。阅读方法章时应重点看状态机、权限边界和证据流，而不是寻找 loss function。</p>
-<p>这个判断很重要，因为系统论文的“严谨性”来自协议是否闭合。Evidence batch 必须能复现失败；review gate 必须独立于候选 patch；trial worker 必须隔离；verdict 必须不可被候选修改绕过；promotion 必须有 rollback plan。只要其中一个环节由同一个待验证 agent 自己控制，自演化就会从受控修复变成自我授权。</p>
-<h3 id="2-13-不变量清单">2.13 不变量清单</h3>
-<p>我会把 MOSS 的不变量列成四类。第一，权限不变量：候选 patch 不能修改密钥、审批、verdict policy 和审计记录。第二，验证不变量：trial worker 的环境、grader 和回放数据不能由候选 patch 任意改写。第三，发布不变量：promotion 必须是原子替换，并且保留可回滚版本。第四，记录不变量：每次演化都要保存 evidence、diff、日志、评分、人工同意和最终结果。</p>
-<p>这些不变量比具体模型能力更重要。一个自演化系统短期提分很容易，但如果它能改掉验证器、删除失败样本或扩大权限，长期会不可维护。MOSS 的 host-daemon、gateway、trial worker 和 consent gate 可以理解为把这些不变量落实到系统边界上。</p>
-<h3 id="2-14-可以借鉴到自动化流水线的部分">2.14 可以借鉴到自动化流水线的部分</h3>
-<p>对每日论文、市场或训练自动化来说，MOSS 最有价值的不是“让 agent 自己改自己”，而是 failure replay。每次自动化失败都应留下可回放包：输入文件快照、命令、日志、外部 API 返回、期望输出和实际输出。修复 patch 先在 replay 上跑，再决定是否进入主流程。这样可以降低自动化越跑越歪的风险。</p>
-<p>源码级自改写应限制在低风险模块，例如解析、格式化、报告校验和日志归档。凭证、删除、推送、权限和发布流程不应由自演化 patch 自动修改。MOSS 给出的启发是先把边界画清楚，再谈自动修复能力。</p>
+<p>Figure 1 展示 MOSS 的 host-side topology，它比流程公式更具体地说明了“可演化”和“不可越权”如何同时存在。moss-gateway 容器承载用户侧 agent、evolution service 和 metadata，trial worker 则在隔离环境中运行候选 patch。中间的 spawn / approval / evidence transfer 关系表明，自演化不是让当前生产 agent 原地改自己，而是让候选修改进入受控 worker，完成构建、回放和审计后才可能 promotion。这个拓扑也是本文和普通 coding agent 的区别：普通 agent 关注生成 patch，MOSS 关注 patch 在什么边界内被允许、如何证明有效、如何回退。</p>
+<p>把 Figure 1 和上面的协议公式合看，可以得到更清晰的方法分层。公式给出生命周期顺序，Figure 1 给出生命周期中的职责隔离：gateway 负责接收任务和保留主控策略，evolution service 负责把失败证据转成候选改写，trial worker 负责验证候选 image，approval 和 rollback 负责阻止错误修改直接污染生产。对长期自动化流水线而言，这个设计很有用，因为质量问题往往不是一次报错，而是坏截图、坏公式、坏目录、坏 HTML 多轮积累。只有把坏产物也放进 evidence，并要求 trial worker 用校验脚本复现失败，自动修复才不会变成“生成新错误替代旧错误”。</p>
+<h3 id="2-2-evolution-lifecycle-从-failure-batch-到-trial-worker">2.2 Evolution lifecycle：从 failure batch 到 trial worker</h3>
+<p>一次演化从 evidence batch 开始，而不是从模型自由猜测开始。Evidence 应包含失败任务、工具调用、日志、错误输出和期望行为。Locate 阶段缩小修改范围，plan 阶段提出小步修复，review gate 检查是否触碰高风险边界，coding-agent 再生成候选 patch。Build 只证明代码能构建，trial worker 才证明行为是否改善。</p>
+<p>Trial worker 是隔离验证核心。候选 image 不直接进入生产，而是在 trial worker 中回放失败样本和回归任务。这个设计对 Agent 系统尤其重要，因为失败可能来自外部工具、并发状态、session 生命周期、权限封装或结果解析，静态单元测试往往覆盖不到。MOSS 的贡献是把这些生产失败转成可回放验证闭环。</p>
+<h3 id="2-3-verdict-user-consent-和-rollback">2.3 Verdict、user consent 和 rollback</h3>
+<p>Verdict 不能只看本次失败样本是否变好，还应综合回归测试、风险标签、健康探针和权限审计。User consent 表示高风险源码级推广仍需要人类确认；health-probe-gated rollback 则要求候选上线前就准备好可回退版本和触发阈值。Rollback 不是失败后的临时补丁，而是 promotion 的前置条件。</p>
+<p>对自动化流水线来说，MOSS 最值得借鉴的是 failure replay 和产物级验收。每次失败不仅要保存报错日志，还要保存坏产物示例，例如重复模板段落、错误截图、公式转义损坏、目录超长和本地路径泄漏。修复脚本必须先证明这些坏产物会失败，再证明新产物能通过。否则自修复只是在命令层返回 0，不能保证用户看到的内容变好。</p>
+<h3 id="2-4-安全边界和可迁移部分">2.4 安全边界和可迁移部分</h3>
+<p>MOSS 的可迁移部分应优先放在低风险 harness：解析器、格式化、报告校验、日志归档、回放任务生成。凭证、删除、发布、verdict policy 和权限模型不应由候选 patch 自动修改。长期运行时，风险不是单次 patch 错，而是多轮小修改逐步改变系统边界。因此每次演化都必须保存 evidence、diff、trial logs、verdict、user consent 和 rollback 结果。</p>
+<p>如果把 MOSS 用在论文调研流水线，方法映射很直接：坏截图、坏公式、过细目录、重复模板段落和主页同步错误都应进入 evidence batch；locate 阶段定位到裁图脚本、Markdown 渲染器、prompt 或校验脚本；plan 阶段给出最小修改；review 阶段确认不会改凭证、删除历史笔记或覆盖用户改动；trial 阶段用历史坏样例和当天产物一起跑验证。这样，自动化优化不是靠一次人工提醒，而是把“用户看到的低质量产物”转成可回放回归集。Figure 1 中 gateway、evolution service 和 trial worker 的隔离关系，正是这个做法能长期运行的前提。</p>
+<p>这个闭环的核心不是自动改得更多，而是每次修改都必须被证据、隔离验证和回滚策略约束。</p>
 <h2 id="3-实验结果">3. 实验结果</h2>
 <h3 id="3-1-实验设置">3.1 实验设置</h3>
 <p>论文在 OpenClaw 上展示一轮 self-rewriting。评估不是大规模 benchmark，而是四个具体任务，每个任务三次 trial，比较 baseline 与 iteration 1 后的 grader score。实验规模不大，但目的在于验证闭环是否成立：失败证据能否定位到源码问题，候选 patch 能否构建，trial worker 能否回放，verdict 后系统分数是否提升。</p>
 <h3 id="3-2-主结果">3.2 主结果</h3>
 <p><img alt="Table 2：OpenClaw 任务自改写前后分数" src="../assets/images/moss-self-evolution/3.jpg" /></p>
 <p>Table 2 报告 T141zh_sla_compliance_audit、T142_sla_compliance_audit、T137zh_restock_chain_check、T138_restock_chain_check 四个任务在 baseline 和 iteration 1 后的 mean grader score。四项任务均提升，平均从约 0.25 到约 0.61。这个表不能证明 MOSS 已经能泛化修复所有 Agent 系统，但能证明一件事：在给定失败 batch 和受控回放环境下，源码级候选修改确实可以改善任务表现，并且提升不是只来自 prompt 文本变化。</p>
-<p>这张图表应服务于 MOSS 的安全边界判断：它说明候选源码修改必须经过隔离、回放、verdict 和回滚，而不是由 agent 直接推广到生产。### 3.3 Trace 与验证闭环</p>
+<p>Table 2 的分数只能说明一轮 self-rewriting 在四个 OpenClaw 任务上带来改善，不能单独证明长期安全。它应和 MOSS 的安全边界一起读：候选源码修改必须经过隔离、回放、verdict 和回滚，而不是由 agent 直接推广到生产。</p>
+<h3 id="3-3-trace-与验证闭环">3.3 Trace 与验证闭环</h3>
 <p>论文还展示 stage trace，说明系统经历定位、计划、实现、构建、回放和 verdict，而不是直接把 patch 推到生产。这对解释实验非常关键。若只看</p>
 <p>Table 2，读者可能以为模型只是生成了一段更好的代码；结合 trace 才能看出 MOSS 的贡献是 lifecycle：候选改动必须经过隔离验证和上线门槛。这个闭环比单次分数提升更值得关注。</p>
 <h3 id="3-4-证据边界">3.4 证据边界</h3>
