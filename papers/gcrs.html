@@ -9,11 +9,11 @@
     <script>window.MathJax = {tex: {inlineMath: [['$', '$'], ['\\(', '\\)']], displayMath: [['$$', '$$'], ['\\[', '\\]']]}, svg: {fontCache: 'global'}};</script>
     <script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
   </head>
-  <body>
-    <header class="site-header"><nav class="nav" aria-label="主导航"><a class="brand" href="../index.html"><span class="brand-mark">LZ</span><span>liuzhao09</span></a><div class="nav-links"><a href="../index.html">首页</a><a href="../papers.html">论文库</a></div></nav></header>
+  <body class="paper-page">
+    <header class="site-header paper"><nav class="nav" aria-label="主导航"><a class="brand" href="../index.html"><span class="brand-mark">LZ</span><span>liuzhao09</span></a><div class="nav-links"><a href="../index.html">首页</a><a href="../papers.html">论文库</a></div></nav></header>
     <main class="page-shell paper-shell">
       <section class="paper-hero"><div><p class="breadcrumb"><a href="../papers.html">论文库</a> / gcrs</p><h1 class="paper-title">GCRS：把对话推荐写进结构化生成序列</h1><p class="paper-subtitle">2026-05-23 结构优化版每日论文精读同步页</p><div class="tag-row"><span class="tag">Paper Note</span><span class="tag">Rebuilt</span></div></div></section>
-      <div class="paper-layout"><aside class="paper-toc" aria-label="目录"><p>目录</p><a class="toc-l1" href="#1-背景和问题">1. 背景和问题</a>
+      <div class="article-layout note-layout"><nav class="toc" aria-label="目录"><p>目录</p><a class="toc-l1" href="#1-背景和问题">1. 背景和问题</a>
 <a class="toc-l1" href="#2-方法">2. 方法</a>
 <a class="toc-l2" href="#2-1-semantic-id-construction-用-rq-vae-把-item-映射成离散语义码">2.1 Semantic ID construction：用 RQ-VAE 把 item 映射成离散语义码</a>
 <a class="toc-l2" href="#2-2-structured-generation-mode-target-response-三段式生成">2.2 Structured generation：mode、target、response 三段式生成</a>
@@ -35,7 +35,7 @@
 <a class="toc-l2" href="#4-3-局限与后续跟进">4.3 局限与后续跟进</a>
 <a class="toc-l2" href="#4-4-我会如何落地">4.4 我会如何落地</a>
 <a class="toc-l2" href="#4-5-后续问题">4.5 后续问题</a>
-<a class="toc-l2" href="#4-6-后续观察清单">4.6 后续观察清单</a></aside><article class="markdown-body paper-content"><p>这里重写精读《Generative Conversational Recommender System》。论文入口：<a href="https://arxiv.org/abs/2605.21987">arXiv:2605.21987</a>。作者 Sixiao Zhang、Mingrui Liu、Cheng Long 来自 Nanyang Technological University。PDF 给出 GitHub 线索，但本轮访问对应仓库返回 404，因此代码状态按“未核验到可用仓库”处理。本文核心是把对话推荐从外部检索加回复生成，改成统一自回归序列生成，同时用 semantic ID 和 constrained decoding 控制 item 合法性。</p>
+<a class="toc-l2" href="#4-6-后续观察清单">4.6 后续观察清单</a></nav><article class="article markdown-body"><p>这里重写精读《Generative Conversational Recommender System》。论文入口：<a href="https://arxiv.org/abs/2605.21987">arXiv:2605.21987</a>。作者 Sixiao Zhang、Mingrui Liu、Cheng Long 来自 Nanyang Technological University。PDF 给出 GitHub 线索，但本轮访问对应仓库返回 404，因此代码状态按“未核验到可用仓库”处理。本文核心是把对话推荐从外部检索加回复生成，改成统一自回归序列生成，同时用 semantic ID 和 constrained decoding 控制 item 合法性。</p>
 <h2 id="1-背景和问题">1. 背景和问题</h2>
 <p>对话推荐系统的难点在于它同时要做两件事：理解多轮对话中的用户偏好，并把推荐结果自然地嵌入回复。传统 CRS 通常采用模块化 pipeline：对话编码器把上下文变成 query representation，推荐模块在 item embedding space 中做 nearest-neighbor retrieval，生成模块再把 top-k item title 或占位符插入自然语言回复。这种设计工程上可控，但推荐和语言生成之间是松耦合的。推荐器优化的是 item ranking，生成器优化的是回复流畅度，二者之间没有共同的 next-token objective，也很难让语言模型在生成时真正“知道”协同过滤和 item 语义。 LLM 进入 CRS 后，很多工作尝试把大模型用作 reranker 或直接生成 item title。前者仍依赖外部 candidate generator，若候选集中没有正确 item，再强的 reranker 也无能为力；后者容易出现 hallucination，例如生成一个不存在、拼写错误或同名歧义的电影/商品标题。还有一种做法是给每个 item 一个唯一 token，但大规模 item catalog 会导致词表膨胀，新 item 加入时还需要修改词表或重新训练。GCRS 的出发点正是这三个矛盾：推荐和对话目标分裂、自然语言 title 不可靠、唯一 ID 不可扩展。 论文提出的方向是“完全生成式对话推荐”，但这个“生成式”并不是不受约束地输出文字，而是把 item 表示成由 RQ-VAE 学到的 semantic IDs，并把这些 ID 作为可生成 token 进入同一个 autoregressive sequence。模型先决定 response intent，再生成 recommendation target，最后生成自然语言 response。这样一来，推荐结果不再是后处理插入，而是回复生成过程中的显式中间决策；同时 constrained decoding 可以限制 SID 必须对应合法 item，避免不存在 item。 这篇论文值得重新写清楚，因为旧笔记只把它概括成“把对话推荐变成生成问题”，遗漏了两个关键点：第一，semantic ID 的作用不是给 item 换个名字，而是解决 title hallucination、词表规模和新 item 泛化；第二，structured generation 的作用不是格式美化，而是让 intent、target、response 形成依赖顺序。只有这两点同时成立，GCRS 才比“LLM 生成回复 + 外部推荐器”有本质差别。</p>
 <p>对话推荐与普通序列推荐的差别在于，用户偏好不是只体现在 item history 中，还体现在自然语言中的否定、犹豫、解释和追问。用户可能说“不要太恐怖，但可以有悬疑”“我看过星际穿越，想要类似但节奏慢一点”，这些表达既包含 item reference，也包含高层属性。传统 pipeline 如果先把整个对话压成一个 embedding，再到 item space 里近邻搜索，会丢掉回复策略和推荐时机；如果让 LLM 只负责生成回复，又会让推荐目标依赖外部模块。 GCRS 的背景还涉及 semantic ID 这条生成式推荐路线。TIGER 等工作证明，用离散语义码生成 item 是可行方向，但它们主要服务序列推荐，不处理多轮对话中的 intent 和 response realization。GCRS 把这个思想移到 CRS：不仅生成 item ID，还生成对话模式和回复文本。这个迁移并不简单，因为 CRS 的输出既要命中 item，又要像自然对话；错误不仅可能是推荐错，也可能是推荐时机不合适、解释不一致或生成不存在 item。</p>
