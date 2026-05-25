@@ -3,86 +3,153 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>HARNESS-LM 解读 | liuzhao09</title>
-    <meta name="description" content="面向 Sponsored Search Retrieval 的三阶段 SLM 蒸馏配方">
+    <title>HARNESS-LM: A Three-Phase Training Recipe for Harnessing SLMs in Sponsored Search Retrieval：面向 Sponsored Search Retrieval 的三阶段 SLM 蒸馏配方 | liuzhao09</title>
+    <meta name="description" content="用强 SLM teacher 建质量上界，再通过 query representation alignment、剪枝和 contrastive refinement 蒸馏出能在线上赞助搜索低延迟部署的 student retriever。 本笔记按当前流水线的精读要求重写：先记录公式清单、方法模块清单和图表清单，再围绕论文原文的任务设定、训练/推理链路、实验">
     <link rel="stylesheet" href="../assets/css/site.css">
-    <script>window.MathJax = { tex: { inlineMath: [['$', '$'], ['\\(', '\\)']], displayMath: [['$$', '$$'], ['\\[', '\\]']] }, svg: { fontCache: 'global' } };</script>
+    <script>window.MathJax = { tex: { inlineMath: [['$', '$'], ['\(', '\)']], displayMath: [['$$', '$$'], ['\[', '\]']] }, svg: { fontCache: 'global' } };</script>
     <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
   </head>
   <body class="paper-page">
-    <header class="site-header paper"><nav class="nav" aria-label="主导航"><a class="brand" href="../index.html"><span class="brand-mark">LZ</span><span>liuzhao09</span></a><div class="nav-links"><a href="../index.html">首页</a><a href="../papers.html">论文库</a></div></nav></header>
+    <header class="site-header paper">
+      <nav class="nav" aria-label="主导航"><a class="brand" href="../index.html"><span class="brand-mark">LZ</span><span>liuzhao09</span></a><div class="nav-links"><a href="../index.html">首页</a><a href="../papers.html">论文库</a></div></nav>
+    </header>
     <main class="page-shell paper-shell">
-      <section class="paper-hero note-hero"><div><p class="breadcrumb"><a href="../papers.html">论文库</a> / HARNESS-LM</p><h1 class="paper-title">HARNESS-LM：面向 Sponsored Search Retrieval 的三阶段 SLM 蒸馏配方</h1><p class="paper-dek">用 billion-scale SLM teacher retriever 建立质量上界，再用 L2 query representation alignment 蒸馏到 sub-600M student encoder，最后做 contrastive refinement，目标是在赞助搜索中同时保留检索质量和线上低延迟。</p><div class="tag-row"><span class="tag">Paper Note</span><span class="tag">Daily Research</span><span class="tag">2026-05-25</span></div></div><aside class="paper-meta" aria-label="论文信息"><dl><div><dt>类别</dt><dd>推荐算法</dd></div><div><dt>同步日期</dt><dd>2026-05-25</dd></div><div><dt>arXiv</dt><dd>2605.23572</dd></div></dl></aside></section>
+      <section class="paper-hero note-hero"><div><p class="breadcrumb"><a href="../papers.html">论文库</a> / harness-lm</p><h1 class="paper-title">HARNESS-LM: A Three-Phase Training Recipe for Harnessing SLMs in Sponsored Search Retrieval：面向 Sponsored Search Retrieval 的三阶段 SLM 蒸馏配方</h1><p class="paper-dek">用强 SLM teacher 建质量上界，再通过 query representation alignment、剪枝和 contrastive refinement 蒸馏出能在线上赞助搜索低延迟部署的 student retriever。 本笔记按当前流水线的精读要求重写：先记录公式清单、方法模块清单和图表清单，再围绕论文原文的任务设定、训练/推理链路、实验表和工程边界展开。</p><div class="tag-row"><span class="tag">Paper Note</span><span class="tag">Daily Research</span><span class="tag">2026-05-25</span></div></div><aside class="paper-meta" aria-label="论文信息"><dl><div><dt>类别</dt><dd>推荐算法</dd></div><div><dt>同步日期</dt><dd>2026-05-25</dd></div><div><dt>arXiv</dt><dd>2605.23572</dd></div></dl></aside></section>
       <div class="article-layout note-layout"><nav class="toc" aria-label="文章目录"><a class="toc-l1" href="#1-背景和问题">1. 背景和问题</a>
 <a class="toc-l1" href="#2-方法">2. 方法</a>
-<a class="toc-l2" href="#2-1-公式清单与目标变量">2.1 公式清单与目标变量</a>
-<a class="toc-l2" href="#2-2-核心流程-phase-1-teacher-retriever-与-phase-2-query-representation-alignment">2.2 核心流程：Phase 1 teacher retriever 与 Phase 2 query representation alignment</a>
-<a class="toc-l2" href="#2-3-训练-蒸馏或压缩策略">2.3 训练、蒸馏或压缩策略</a>
-<a class="toc-l2" href="#2-4-推理链路和系统接入">2.4 推理链路和系统接入</a>
-<a class="toc-l2" href="#2-5-实现检查清单">2.5 实现检查清单</a>
+<a class="toc-l2" href="#2-1-公式清单与方法地图">2.1 公式清单与方法地图</a>
+<a class="toc-l2" href="#2-2-论文核心流程">2.2 论文核心流程</a>
+<a class="toc-l2" href="#2-3-训练目标与优化控制">2.3 训练目标与优化控制</a>
+<a class="toc-l2" href="#2-4-推理链路-服务约束与系统接入">2.4 推理链路、服务约束与系统接入</a>
+<a class="toc-l2" href="#2-5-复现时应检查的实现细节">2.5 复现时应检查的实现细节</a>
+<a class="toc-l2" href="#2-6-模块间信号流与落地检查">2.6 模块间信号流与落地检查</a>
 <a class="toc-l1" href="#3-实验结果">3. 实验结果</a>
 <a class="toc-l2" href="#3-1-实验设置与主结果">3.1 实验设置与主结果</a>
-<a class="toc-l2" href="#3-2-消融和分桶应怎么看">3.2 消融和分桶应怎么看</a>
-<a class="toc-l2" href="#3-3-结果边界">3.3 结果边界</a>
+<a class="toc-l2" href="#3-2-消融-效率和分桶证据">3.2 消融、效率和分桶证据</a>
+<a class="toc-l2" href="#3-3-结果边界与复现风险">3.3 结果边界与复现风险</a>
 <a class="toc-l1" href="#4-总结">4. 总结</a>
 <a class="toc-l2" href="#4-1-我的判断">4.1 我的判断</a>
-<a class="toc-l2" href="#4-2-局限与风险">4.2 局限与风险</a>
-<a class="toc-l2" href="#4-3-后续跟进">4.3 后续跟进</a></nav><article class="article markdown-body"><p>HARNESS-LM：面向 Sponsored Search Retrieval 的三阶段 SLM 蒸馏配方</p>
-<p>论文入口：<a href="https://arxiv.org/abs/2605.23572">arXiv:2605.23572</a>。英文标题为《HARNESS-LM: A Three-Phase Training Recipe for Harnessing SLMs in Sponsored Search Retrieval》。作者：Vipul Gupta, Shikhar Mohan, Lakshya Kumar, Pranjal Chitale, Nikit Begwani, Amit Singh, Manik Varma。一作/主机构口径：Microsoft AI India。代码/项目页状态：未核验到独立开源仓库；包含 Bing Ads 内部 benchmark 与线上 A/B。 主类别：推荐算法。</p>
-<p>这篇论文的核心可以概括为：用 billion-scale SLM teacher retriever 建立质量上界，再用 L2 query representation alignment 蒸馏到 sub-600M student encoder，最后做 contrastive refinement，目标是在赞助搜索中同时保留检索质量和线上低延迟。 本轮笔记基于 arXiv abstract、PDF/HTML 章节结构与单篇 worker 草稿交叉整理，重点记录可复现机制、图表证据、工程迁移边界和后续跟进点。</p>
+<a class="toc-l2" href="#4-2-工程启发与复现建议">4.2 工程启发与复现建议</a>
+<a class="toc-l2" href="#4-3-局限与后续跟进">4.3 局限与后续跟进</a></nav><article class="article markdown-body"><p>HARNESS-LM: A Three-Phase Training Recipe for Harnessing SLMs in Sponsored Search Retrieval：面向 Sponsored Search Retrieval 的三阶段 SLM 蒸馏配方</p>
+<p>论文入口：<a href="https://arxiv.org/abs/2605.23572">arXiv:2605.23572</a>。作者：Vipul Gupta, Shikhar Mohan, Lakshya Kumar, Pranjal Chitale, Nikit Begwani, Amit Singh, Manik Varma。机构口径：Microsoft AI India。代码/项目页状态：未核验到独立开源仓库；包含 Bing Ads 内部 benchmark 与线上 A/B。主类别：推荐算法；公开日期：arXiv submitted 2026-05-22。</p>
+<p>用强 SLM teacher 建质量上界，再通过 query representation alignment、剪枝和 contrastive refinement 蒸馏出能在线上赞助搜索低延迟部署的 student retriever。 本笔记按当前流水线的精读要求重写：先记录公式清单、方法模块清单和图表清单，再围绕论文原文的任务设定、训练/推理链路、实验表和工程边界展开。</p>
 <h2 id="1-背景和问题">1. 背景和问题</h2>
-<p>HARNESS-LM: A Three-Phase Training Recipe for Harnessing SLMs in Sponsored Search Retrieval 进入今天的候选池，首先是因为它抓住了一个真实系统已经绕不开的问题：用 billion-scale SLM teacher retriever 建立质量上界，再用 L2 query representation alignment 蒸馏到 sub-600M student encoder，最后做 contrastive refinement，目标是在赞助搜索中同时保留检索质量和线上低延迟。 这类问题在论文标题里看起来属于 Sponsored Search / Retrieval Distillation / Ads Ranking，但更深层的共性是系统中某个长期被当作工程细节的变量开始影响模型能力。 问题背景：HARNESS-LM 在这一层要解决的是 旧链路把关键状态或反馈折叠进平均表示，导致离线指标和真实行为之间出现缺口。在推荐、搜索、广告和 agent 系统里，用户行为、工具结果、上下文状态、候选生成和反馈采样都不是干净监督信号。若这些信息只以隐式方式进入模型，后续很难知道模型到底利用了什么。 这不是一个孤立组件，而是把论文问题、数据口径、模型输入、训练目标、推理路径和评估证据连成同一条链路。读这篇论文时，我更关注它如何改变系统中原本被隐式处理的变量：哪些信号被保留，哪些状态被压缩，哪些反馈被校正，哪些成本被显式约束。只有这些变量能在本地日志、训练样本和线上服务中被复核，论文的结论才有迁移价值。 已有方法的不足：HARNESS-LM 在这一层要解决的是 多数旧方案只优化单个模型或单个任务，缺少跨时间、跨任务或跨服务面的统一审计。这会带来两个后果：一是模型可能在局部任务上有效，却无法解释跨场景迁移；二是工程团队只能看到最终指标，无法定位收益来自数据、模型、系统缓存还是评估口径。 这不是一个孤立组件，而是把论文问题、数据口径、模型输入、训练目标、推理路径和评估证据连成同一条链路。读这篇论文时，我更关注它如何改变系统中原本被隐式处理的变量：哪些信号被保留，哪些状态被压缩，哪些反馈被校正，哪些成本被显式约束。只有这些变量能在本地日志、训练样本和线上服务中被复核，论文的结论才有迁移价值。 为什么今天值得看：HARNESS-LM 在这一层要解决的是 论文把问题压到一个可观察接口上。它没有只停留在口号，而是给出 Phase 1 teacher retriever；Phase 2 query representation alignment；Phase 3 contrastive refinement；线上 190M student 部署 等具体处理方式。即使本地不直接采用原方法，也能把这些模块改造成审计清单。 这不是一个孤立组件，而是把论文问题、数据口径、模型输入、训练目标、推理路径和评估证据连成同一条链路。读这篇论文时，我更关注它如何改变系统中原本被隐式处理的变量：哪些信号被保留，哪些状态被压缩，哪些反馈被校正，哪些成本被显式约束。只有这些变量能在本地日志、训练样本和线上服务中被复核，论文的结论才有迁移价值。 和推荐/大模型的关系：HARNESS-LM 在这一层要解决的是 推荐系统和大模型系统都在从单模型时代进入状态系统时代。推荐链路要同时处理召回、排序、重排、曝光反馈和多目标约束；大模型链路要处理上下文、工具、记忆、缓存和安全。论文的价值就在于提醒我们把这些变量从外围工程拉回模型设计。 这不是一个孤立组件，而是把论文问题、数据口径、模型输入、训练目标、推理路径和评估证据连成同一条链路。读这篇论文时，我更关注它如何改变系统中原本被隐式处理的变量：哪些信号被保留，哪些状态被压缩，哪些反馈被校正，哪些成本被显式约束。只有这些变量能在本地日志、训练样本和线上服务中被复核，论文的结论才有迁移价值。 如果把这篇论文放到工程评审里，我会先要求三件事：第一，明确它依赖的输入字段是否能在本地稳定取得；第二，明确它改善的是平均指标、长尾分桶、延迟还是安全边界；第三，明确失败时能否回滚到具体数据、模型版本和服务配置。缺少这三项，论文再新也只能作为阅读材料，不能作为迭代方案。</p>
+<p>HARNESS-LM 关注 sponsored search retrieval 中的质量-延迟矛盾。广告检索需要在极短时间内从海量候选中找出相关广告；大 SLM embedding 模型在公开检索 benchmark 上很强，但直接上线到广告召回会遇到 latency、throughput 和成本限制。论文因此提出三阶段 recipe：先训练强 teacher，建立质量上界；再把 teacher 的 query 表示蒸馏到小 student；最后用 contrastive refinement 恢复检索区分度。</p>
+<p>这篇论文值得细读，是因为它不像许多蒸馏论文只报告离线指标，而是明确围绕 production deployment。它讨论 embedding dimension、prompt、features、loss、teacher quality、query alignment、layer/FFN pruning、latency-quality trade-off 和 online A/B。换句话说，方法目标不是“让小模型像大模型”，而是在 sponsored search 的线上约束下保留足够检索质量。</p>
+<p>对大模型系统也有启发。RAG 和 agent retrieval 经常遇到同样问题：强 retriever 太慢，小 retriever 质量不足。HARNESS-LM 的做法提示我们，可以把大模型能力拆成 teacher 上界、表示对齐、结构压缩和在线对照四个阶段，而不是直接选择“大而慢”或“小而弱”。</p>
+<p>更具体地说，HARNESS-LM: A Three-Phase Training Recipe for Harnessing SLMs in Sponsored Search Retrieval 的问题不应被读成单点模型改进，而应读成系统状态如何被建模、验证和服务化。旧链路通常把关键状态分散在人工规则、离线日志、缓存、业务策略或一次性 prompt 里，最终只能看到平均指标，却无法解释指标变化来自哪里。本文把这些状态拉回可观察接口：输入是什么，输出是什么，何时训练，何时推理，失败时如何定位。</p>
+<p>这也是它和今天其他论文共同的地方：LLM 方向在处理 skill、memory、context，推荐方向在处理 user story、retriever distillation 和 generative backbone。它们都说明模型能力越来越依赖外部状态管理。阅读这篇论文时，我会持续追问三个问题：第一，论文是否明确记录了状态来源；第二，方法是否有独立验证或对照；第三，结果是否足以支持生产迁移，而不是只在某个离线表里好看。</p>
+<p>补充背景时，要看到 sponsored search retrieval 与普通语义检索的差别。广告检索不仅要相关，还要受预算、竞价、地域、审核和商业目标约束。强 SLM embedding 在公开 benchmark 上表现好，并不意味着可以直接替换线上召回，因为 query encoder 的每毫秒延迟都会影响吞吐和收入。HARNESS-LM 的问题定义因此是生产检索，不是学术 reranking。</p>
+<p>论文把“大 teacher、小 student”拆成 recipe，而不是只做一次蒸馏。这很重要，因为广告检索中的 teacher 质量、embedding dimension、prompt、features、hard negative 和剪枝都会改变最终 Pareto。若没有三阶段流程，student 很可能只是小模型 fine-tune，无法继承大 teacher 的语义几何。</p>
+<p>对 RAG 工程也类似。很多系统希望使用强 embedding 模型，但线上延迟、成本和 index 维度不允许。HARNESS-LM 提供了一条路线：用强模型建立检索空间，再把 query side 压缩到可部署模型，同时保持 document side 和 ANN index 的稳定。</p>
+<p>背景里还要强调广告检索的非对称性。Document/ad 侧可以离线计算、批量更新和压缩，query 侧必须实时响应用户请求。因此 HARNESS-LM 选择压缩 query encoder，而不是简单训练一个对称小双塔。这个决策与生产路径高度绑定，也是论文比普通 embedding distillation 更有价值的地方。</p>
+<p>背景补充一点：HARNESS-LM 的价值在于承认“公开 embedding 排行榜强”与“广告召回可上线”之间有很长距离。广告系统的召回模型必须在固定机器、固定 SLA、固定 index 结构下工作。论文把 teacher 作为训练工具，而不是上线目标，这一点非常务实。</p>
 <h2 id="2-方法">2. 方法</h2>
-<p>方法章先列公式审计，再按论文真实模块拆解。这里的公式不追求完整覆盖所有推导，而是保留和工程实现最相关的目标、评分或预算关系。</p>
-<h3 id="2-1-公式清单与目标变量">2.1 公式清单与目标变量</h3>
+<p>方法章是本笔记的主体。先列公式和图表清单，再按论文真实模块解释训练与推理链路。主文对象包括 Figure 1 的三阶段框架、Table 1 的 teacher retrieval performance、Table 2 的 embedding dimension、Table 3 的 prompt/features/loss 消融、Table 4/5 的 teacher quality 与 alignment 消融、Figure 2 的 alignment loss 曲线、Table 6 的 pruning、Table 7/8 的 contrastive refinement 和 asymmetric fine-tuning、Figure 3 的 embedding 可视化、Table 9 的 latency-quality、Table 10 的线上 A/B、Table 11 的 oracle 输入案例。本文截图保留框架图和 latency/quality 或线上结果表。</p>
+<h3 id="2-1-公式清单与方法地图">2.1 公式清单与方法地图</h3>
+<p><strong>双塔检索分数。</strong></p>
 <div class="math-display">$$
-\mathcal{L}_{align}=\lVert W h_s(q)-h_t(q)\rVert_2^2
+s(q,d)=\langle f_Q(q),f_D(d)
+angle
 $$</div>
-<p>符号解释：$h_s(q)$ 是 student 对 query 的表示，$h_t(q)$ 是 teacher 表示，$W$ 是对齐投影，L2 目标让小模型继承 teacher 的检索几何；后续 contrastive refinement 再优化正负样本区分。 这条公式用于帮助读者把自然语言模块落成可检查的目标变量；后续如果复现，至少要能在日志或实验配置里找到这些变量对应的字段、版本和统计分布。</p>
-<h3 id="2-2-核心流程-phase-1-teacher-retriever-与-phase-2-query-representation-alignment">2.2 核心流程：Phase 1 teacher retriever 与 Phase 2 query representation alignment</h3>
-<p>核心流程：HARNESS-LM 在这一层要解决的是 把输入证据转化为可优化或可排序的中间表示。这一阶段最容易被摘要写得过轻，但它决定了后续所有实验是否可信。输入如果缺少来源、时间或任务上下文，后续再复杂的模型也只能在混乱信号上拟合。 这不是一个孤立组件，而是把论文问题、数据口径、模型输入、训练目标、推理路径和评估证据连成同一条链路。读这篇论文时，我更关注它如何改变系统中原本被隐式处理的变量：哪些信号被保留，哪些状态被压缩，哪些反馈被校正，哪些成本被显式约束。只有这些变量能在本地日志、训练样本和线上服务中被复核，论文的结论才有迁移价值。 接口设计：HARNESS-LM 在这一层要解决的是 每个模块都要说明输入、输出和训练/推理差异。训练阶段可访问全量标签、teacher 输出或离线轨迹，推理阶段却经常只能看到实时上下文和有限缓存。因此本笔记把训练时存在、推理时仍存在、只用于离线诊断的组件分开记录。 这不是一个孤立组件，而是把论文问题、数据口径、模型输入、训练目标、推理路径和评估证据连成同一条链路。读这篇论文时，我更关注它如何改变系统中原本被隐式处理的变量：哪些信号被保留，哪些状态被压缩，哪些反馈被校正，哪些成本被显式约束。只有这些变量能在本地日志、训练样本和线上服务中被复核，论文的结论才有迁移价值。</p>
-<p><img src="../assets/images/harness-lm/1.jpg" alt="Figure 1：HLM 三阶段训练配方"></p>
-<p>这张方法图对应 HARNESS-LM 的主流程。它应该紧跟在方法模块说明之后阅读：先看输入侧如何组织，再看中间表示如何被约束，最后看输出如何进入任务决策。图里真正重要的不是箭头数量，而是每条箭头背后的数据契约。若某个箭头依赖离线标签、人工规则或私有服务，复现时就要把它标成高风险；若某个箭头只在训练时出现，线上推理无法获得，离线收益也要打折解释。对工程团队来说，这张图的最佳用法是把每个框翻译成一张表：字段来源、更新频率、失败回滚、监控指标和可替代基线。</p>
-<p>落地时我会把这一层拆成三类日志：原始输入日志、模型中间决策日志和最终服务行为日志。三类日志不要混在同一张宽表里，否则后续很难区分数据缺失、模型误判和策略回退。更稳妥的做法是给每次请求一个稳定 trace id，把候选、上下文、约束、模型输出和人工规则的覆盖关系串起来，再在离线回放中复核论文模块到底改变了哪一步。这样做的成本比直接替换主模型高，但它能把论文里的模块从黑盒效果转成可排查对象。</p><p>对 HARNESS-LM 来说，方法图应重点检查 benchmark harness 如何被语言模型生成、过滤和验证。自动生成测试集的风险在于模型可能制造看似多样但语义重复的问题，也可能把已有 benchmark 的表达方式重新包装。一个可靠流程需要记录 seed document、生成 prompt、过滤器版本、去重策略、难度标签和人工抽检结果。只有这些元数据齐全，后续才能判断 benchmark 质量来自真实覆盖提升，还是来自生成器偏好。</p>
-<h3 id="2-3-训练-蒸馏或压缩策略">2.3 训练、蒸馏或压缩策略</h3>
-<p>训练策略：HARNESS-LM 在这一层要解决的是 论文把目标拆成更可控的子问题，而不是让一个大模型隐式学习全部行为。这对生产系统尤其重要，因为线上链路往往不能承受端到端大模型的全部成本。通过 teacher-student、预算控制、验证门控、语义 tower 或多任务 prompt 等机制，可以把研究能力转移到可服务化组件里。 这不是一个孤立组件，而是把论文问题、数据口径、模型输入、训练目标、推理路径和评估证据连成同一条链路。读这篇论文时，我更关注它如何改变系统中原本被隐式处理的变量：哪些信号被保留，哪些状态被压缩，哪些反馈被校正，哪些成本被显式约束。只有这些变量能在本地日志、训练样本和线上服务中被复核，论文的结论才有迁移价值。 优化边界：HARNESS-LM 在这一层要解决的是 方法必须绑定验证或约束。如果没有 held-out gate、延迟预算、反事实归因、线上 shadow 或 A/B 指标，模型很容易把训练数据中的偏差当成规律。论文值得看的地方在于它至少尝试把这些边界写进方法。 这不是一个孤立组件，而是把论文问题、数据口径、模型输入、训练目标、推理路径和评估证据连成同一条链路。读这篇论文时，我更关注它如何改变系统中原本被隐式处理的变量：哪些信号被保留，哪些状态被压缩，哪些反馈被校正，哪些成本被显式约束。只有这些变量能在本地日志、训练样本和线上服务中被复核，论文的结论才有迁移价值。</p>
-<h3 id="2-4-推理链路和系统接入">2.4 推理链路和系统接入</h3>
-<p>推理链路：HARNESS-LM 在这一层要解决的是 推理阶段要回答模型如何接收请求、如何读取状态、如何输出候选或动作。很多论文只报告离线精度，却没有说明在线服务成本。这里必须检查 p99 延迟、吞吐、缓存、fallback、记忆读写、候选集规模和安全隔离。 这不是一个孤立组件，而是把论文问题、数据口径、模型输入、训练目标、推理路径和评估证据连成同一条链路。读这篇论文时，我更关注它如何改变系统中原本被隐式处理的变量：哪些信号被保留，哪些状态被压缩，哪些反馈被校正，哪些成本被显式约束。只有这些变量能在本地日志、训练样本和线上服务中被复核，论文的结论才有迁移价值。 系统接入：HARNESS-LM 在这一层要解决的是 论文模块如果进入真实链路，应该先以 shadow 或回放方式验证。先让它读取真实请求但不影响线上决策，再比较输出分布、失败样本和成本；只有结果稳定，才进入小流量实验。 这不是一个孤立组件，而是把论文问题、数据口径、模型输入、训练目标、推理路径和评估证据连成同一条链路。读这篇论文时，我更关注它如何改变系统中原本被隐式处理的变量：哪些信号被保留，哪些状态被压缩，哪些反馈被校正，哪些成本被显式约束。只有这些变量能在本地日志、训练样本和线上服务中被复核，论文的结论才有迁移价值。</p>
-<h3 id="2-5-实现检查清单">2.5 实现检查清单</h3>
-<p>复现 HARNESS-LM 时，我会把实现拆成五个检查点。第一，确认输入数据和论文口径一致；第二，实现最小可用模块，不引入额外复杂结构；第三，建立强基线和朴素替代；第四，记录分桶结果和失败样本；第五，把成本和安全约束纳入同一张结果表。这个顺序可以防止团队在复杂模型里掩盖数据或评估问题。</p>
+<p>符号解释：q 是 query，d 是广告或文档；query encoder 和 document encoder 的内积作为召回分数。 这条公式在笔记中的作用是把论文描述转成可检查变量，复现时应能在数据、日志或配置中找到对应字段。</p>
+<p><strong>teacher contrastive loss。</strong></p>
+<div class="math-display">$$
+L_{QwenCL}(i)=-\log \frac{\exp(s(q_i,d_i^+)/	au)}{\sum_j \exp(s(q_i,d_j)/	au)}
+$$</div>
+<p>符号解释：强 teacher 用对比学习在正负样本上建立 embedding 几何；这里写法按论文描述整理。 这条公式在笔记中的作用是把论文描述转成可检查变量，复现时应能在数据、日志或配置中找到对应字段。</p>
+<p><strong>query 表示对齐。</strong></p>
+<div class="math-display">$$
+L_{align}=\lVert W f_S^Q(q)-f_T^Q(q)
+Vert_2^2
+$$</div>
+<p>符号解释：student query encoder 经过投影 W 后对齐 teacher query 表示，document side 可保持线上可用结构。 这条公式在笔记中的作用是把论文描述转成可检查变量，复现时应能在数据、日志或配置中找到对应字段。</p>
+<p><strong>层重要性。</strong></p>
+<div class="math-display">$$
+I_{layer}(\ell)=E_{x\sim C}\lVert y_\ell(x)-y_{\ell}^{ablated}(x)
+Vert
+$$</div>
+<p>符号解释：剪枝阶段用校准集 C 估计层或 FFN 单元的重要性，低影响组件可删除后再对齐。 这条公式在笔记中的作用是把论文描述转成可检查变量，复现时应能在数据、日志或配置中找到对应字段。</p>
+<h3 id="2-2-论文核心流程">2.2 论文核心流程</h3>
+<p>第一阶段是 teacher retriever。论文使用 billion-scale SLM teacher，例如 Qwen3-Embedding-4B/8B 类模型，通过对称或非对称设置在 sponsored search 数据上训练。teacher 的作用不是上线，而是提供质量上界和 embedding 几何。Table 1/2/3 说明 teacher 的维度、prompt、feature 和 loss 选择会显著影响结果，因此这个阶段要先把大模型能力调到合理上限，再谈蒸馏。</p>
+<p>第二阶段是 query representation alignment。赞助搜索线上路径通常对 query encoder 的延迟最敏感，而 document/ad 表示可以离线预计算。HARNESS-LM 因此重点让小 student query encoder 对齐 teacher query 表示。L2 alignment 目标比直接训练排序标签更稳定，因为它传递的是 teacher embedding 空间中的几何结构：哪些 query 接近、哪些 query 需要分开、哪些语义方向对广告检索重要。</p>
+<p><img src="../assets/images/harness-lm/1.jpg" alt="Figure 1：HARNESS-LM 的 teacher、alignment、contrastive refinement 三阶段训练框架"></p>
+<p>补充看这张图时，要注意三阶段的顺序约束。Teacher retriever 先给出高质量表示和排序信号，alignment 阶段把学生查询向量拉向教师空间，contrastive refinement 再让学生适配真实 sponsored search 负样本。若直接从第三阶段开始，小模型容易在噪声负样本上欠拟合；若只有第一、二阶段，又未必能适配在线召回分布。</p>
+<p>这张框架图把 HARNESS-LM 的三阶段逻辑放在一起。左侧是强 teacher 训练，用大 SLM 建立高质量检索空间；中间是 query alignment，把小 student 的 query 表示拉向 teacher；右侧是 contrastive refinement，在正负样本上恢复线上检索边界。图中最重要的是阶段顺序：如果没有 teacher 上界，student 缺少学习目标；如果没有 alignment，剪枝后的小模型难以继承语义空间；如果没有 CR，student 可能只像 teacher 的平均表示，却不能处理 sponsored search 的边界样本。</p>
+<h3 id="2-3-训练目标与优化控制">2.3 训练目标与优化控制</h3>
+<p>对齐目标还涉及投影和旋转。student 表示维度、teacher 表示维度和线上 index 维度未必一致，论文使用投影或 rotation alignment 处理空间差异。这个细节很工程化：如果只追求离线相似度，可能得到无法接入现有 ANN index 的向量；如果只追求线上维度，student 又可能丢失 teacher 的判别方向。</p>
+<p>剪枝阶段进一步压缩 student。论文用 layer/FFN importance 衡量哪些层或前馈单元可以移除，并在剪枝后重新 alignment。这个流程比一次性蒸馏更稳，因为结构压缩会破坏 embedding 几何，需要再用 teacher 修正。Table 6 显示逐步剪枝和重对齐的影响，帮助选择质量和延迟的 Pareto 点。</p>
+<h3 id="2-4-推理链路-服务约束与系统接入">2.4 推理链路、服务约束与系统接入</h3>
+<p>第三阶段 contrastive refinement 用真实正负样本恢复排序边界。L2 alignment 让 student 接近 teacher，但不一定在每个线上边界样本上最优；contrastive refinement 重新使用 query-document 对，让模型在 hard negatives 和 in-batch negatives 上学习区分。论文把 CR 放在 alignment 后面，是因为先有 teacher 几何，再做任务判别，训练会更稳定。</p>
+<p>推理时，HLM 的目标是替换或增强线上 query encoder。document/ad embeddings 可离线产出，query embedding 实时生成，再与候选或 ANN index 做内积召回。这个路径要求模型小、维度合适、batching 可控、p99 latency 符合广告系统预算。论文报告 190M student 和多个延迟-质量点，说明方法从一开始就在服务约束内设计。</p>
+<h3 id="2-5-复现时应检查的实现细节">2.5 复现时应检查的实现细节</h3>
+<p>复现 HARNESS-LM: A Three-Phase Training Recipe for Harnessing SLMs in Sponsored Search Retrieval 时，应把论文模块拆成可观测的输入、输出、训练目标、推理路径和失败样本。每个模块都要记录数据来源、版本、延迟、成本、可回滚策略和与基线的差异。只有这些信息完整，论文结果才有本地迁移价值。</p>
+<h3 id="2-6-模块间信号流与落地检查">2.6 模块间信号流与落地检查</h3>
+<p>第一阶段 teacher 训练要把质量上界做实。论文比较 Qwen3-Embedding 4B/8B、LoRA rank、embedding dimension、prompt 和 loss。这个阶段若做弱，后续所有 student 都受限。对本地复现，teacher 阶段应保留完整训练配置和离线评测表，因为它是蒸馏目标的来源。</p>
+<p>第二阶段 alignment 的核心是只压 query side。广告或文档 embedding 可以离线批量计算，query embedding 必须实时计算。把 student query encoder 对齐到 teacher query encoder，可以显著降低线上延迟，同时尽量保留 teacher 空间中的 query 语义。</p>
+<p>L2 alignment 与 contrastive loss 的作用不同。L2 让 student 学 teacher 表示的几何位置，适合稳定迁移；contrastive loss 让模型直接区分正负广告，适合修复排序边界。HARNESS-LM 先 alignment 再 CR，是因为直接让小模型面对 noisy ads negatives 可能不稳定，而 teacher 表示提供了更平滑的初始化。</p>
+<p>剪枝不是简单删层。论文用 layer 和 FFN importance 估计组件贡献，再剪掉低影响部分，并重新 alignment。这样做可以避免一次性结构压缩破坏 embedding 空间。真实系统还应检查剪枝后向量分布是否改变 ANN 召回、是否需要重建 index。</p>
+<p>Table 9 的 latency-quality trade-off 也反过来约束方法。若某个 student 只在离线 P@100 上好，但 latency 仍接近 teacher，就没有部署价值；若极快但 precision 掉太多，也会损伤广告收入。HARNESS-LM 的方法始终围绕 Pareto 点选择。</p>
+<p>线上 A/B 阶段说明 student 不是只跑离线 benchmark。广告系统的 revenue、click、impression lift 会受竞价和预算影响，因此 A/B 是必要证据。不过论文摘要没有完全展开置信区间和分桶，复现或迁移时仍要补充分行业、长尾 query 和新广告冷启动。</p>
+<p>Teacher 阶段的 oracle input 和 feature 选择会影响上界。广告系统可能有历史点击、广告类目、landing page、竞价信息或质量分，这些特征有些线上可用，有些只适合训练。论文的 ablation on prompt, features, and loss 说明 teacher 质量来自输入、模型和损失三者共同作用。</p>
+<p>Alignment corpus A 的覆盖范围也很重要。若 A 只包含高频商业 query，student 会在长尾 query 上退化；若 A 包含噪声 query，L2 目标会把噪声也传给 student。复现应按 query 频次、行业、语言、长度和新广告覆盖分层采样。</p>
+<p>Query encoder alignment 看似简单，但它改变的是向量空间几何。Student 不只要接近 teacher 的单点表示，还要保留 query 之间的相对关系。若整体 MSE 低但近邻结构变化大，ANN 召回仍会坏。因此本地检查应加入 nearest-neighbor overlap、rank correlation 和 hard-negative 边界样本。</p>
+<p>剪枝重要性指标需要校准集 C。C 如果太小或分布偏，会错误删除对长尾 query 重要的层。剪枝后重新 alignment 是必要步骤，因为结构变化会旋转或压缩表示空间。线上 index 是否需要重建，也取决于剪枝后向量分布变化。</p>
+<p>Contrastive refinement 的 hard negative 设计决定最终边界。广告检索里的 hard negative 不是随机广告，而是看起来相关、可能竞价、但不应召回的广告。若 hard negative 太弱，CR 提升有限；若太强且标注噪声大，模型可能过拟合人工边界。</p>
+<p>最后，线上 A/B 与离线 P@100 之间可能不一致。广告展示受预算和竞价影响，一个检索模型提升 relevance 也可能改变竞价分布。论文报告 revenue/click/impression lift 是强证据，但迁移时必须重新评估商业目标。</p>
+<p>Teacher-student 关系还可以看作能力蒸馏与服务解耦。Teacher 可以使用更大模型、更高维 embedding、更复杂 prompt 和训练期特征；student 必须满足线上 query path。关键是不能让 teacher 依赖 student 永远拿不到的信息，否则 alignment 只能学到不可实现的空间。论文的 oracle input 讨论正好提示了这个风险。</p>
+<p>Embedding dimension 的选择不仅影响模型输出，还影响 ANN index。较高维度会增加存储、内存带宽和搜索成本；较低维度会压缩语义空间。Table 2 的意义在于找到部署可接受的维度，而不是追求 teacher 的最高分。</p>
+<p>Alignment loss 的训练曲线需要和检索指标一起看。L2 loss 持续下降不代表 P@100 一定上升，因为模型可能在平均意义上接近 teacher，却在 hard negatives 上没有足够边界。因此 Figure 2 和 Table 7 要结合：前者看对齐是否收敛，后者看 CR 是否恢复边界。</p>
+<p>Layer/FFN pruning 的风险是破坏某些行业或长尾 query 的专门能力。平均 P@100 下降小，不代表所有分桶都安全。广告系统应按行业、地域、query 频次和新广告分桶看剪枝影响。若某些高价值行业退化，即使总体指标稳定，也不应上线。</p>
+<p>Latency 表里的吞吐同样重要。低单 query latency 不一定代表高 QPS，如果模型 batch 效率差或 GPU 利用率低，生产成本仍高。Table 9 同时报告 latency 和 throughput，说明部署决策应基于完整成本。</p>
+<p>Online A/B 还要避免归因过度。Revenue lift 可能来自更好相关性，也可能来自流量、预算、拍卖策略或季节因素。论文报告线上结果是强信号，但外部读者仍应关注实验时长、置信区间和分桶。</p>
+<p>HARNESS-LM 还需要关注线上索引兼容性。Student query encoder 输出分布若与旧 document embeddings 不匹配，可能需要重建广告向量库；重建本身有成本和回滚风险。论文强调 query alignment，就是为了尽量保持与 teacher/document side 的空间兼容。复现时应检查新旧 query embedding 在同一 index 上的召回重合率。</p>
+<p>训练语料还应包含 hard negatives 的生命周期。广告内容、竞价和用户意图变化很快，过去的 hard negative 可能后来变成可接受广告，或者反过来。CR 阶段如果使用过期负样本，会让 student 学到错误边界。</p>
+<p>部署时还要设计双轨流量。新 student 可以先只参与 shadow retrieval，记录它会召回哪些广告、旧系统会召回哪些广告、两者差异是否集中在高价值 query。只有差异可解释，才适合进入小流量。</p>
+<p>方法章还应说明部署前校准。Student 输出分数可能和旧检索模型分布不同，即使排序相对合理，也会影响后续融合、阈值和候选截断。上线前需要做 score calibration，把新 student 分数映射到旧系统可接受范围，或调整后续排序的特征归一化。</p>
+<p>另一个实现点是双写 embedding。上线迁移期间，可以同时计算旧 query embedding 和 HLM query embedding，记录两者召回集合差异。这个双写阶段不影响用户体验，却能发现 HLM 是否在特定行业、短 query、长 query 或冷启动广告上偏离旧系统。</p>
+<p>CR 阶段还应关注 label freshness。广告点击和相关性会随季节、活动、预算变化。若训练负样本过旧，student 可能拒绝当前其实有效的广告。因此 CR 数据需要时间衰减或滚动更新。</p>
+<p>方法章再补充一个 teacher 选择标准。Teacher 不一定越大越好，如果 8B teacher 比 4B teacher 只带来很小提升，却显著增加训练成本和蒸馏难度，可能不值得。Table 4 的 teacher quality 实验应读成成本-上界选择，而不是单纯排名。</p>
+<p>Student 侧还应监控 embedding norm。若 alignment 后向量范数分布偏移，内积打分会改变候选截断阈值。可以在训练中加入 norm regularization，或在上线前做向量归一化校准。</p>
+<p>HARNESS-LM 的 recipe 还可扩展到多 teacher。一个 teacher 可能擅长语义相关，一个 teacher 擅长商业转化，融合 teacher 表示或蒸馏多个目标可能更适合广告。只是多 teacher 会增加目标冲突，需要额外权重和验证。</p>
+<p>HARNESS-LM 的方法可以理解为“先确定教师能力边界，再把学生压到可服务形态”。第一阶段的教师并非只提供软标签，而是定义检索任务中哪些 query-document 关系值得保留；第二阶段通过表示对齐把这种能力投射到较小模型；第三阶段再用剪枝和压缩控制延迟。这个顺序很关键：如果先剪枝再对齐，学生容量不足会让知识迁移变成噪声拟合；如果只做蒸馏不做结构压缩，又难以达到在线检索的延迟目标。</p>
+<p>双塔检索场景还要求训练目标和服务形态一致。文档向量通常离线构建，查询向量在线生成，所以任何跨编码器式的交互特征都不能直接放进最终模型；论文通过 query tower 与 document tower 的内积相似度维持 ANN 检索兼容性。复现时应分别记录塔结构、向量维度、归一化方式、负样本策略和离线索引刷新频率，否则表面上相同的蒸馏损失可能对应完全不同的召回性能。</p>
 <h2 id="3-实验结果">3. 实验结果</h2>
-<p>实验章只引用本轮已核验的公开摘要和 PDF/HTML 章节信息，不编造论文没有给出的细节。这里的重点是把结果读成证据链，而不是只摘最高指标。</p>
+<p>实验章按证据链阅读，而不是只摘最高指标。HARNESS-LM: A Three-Phase Training Recipe for Harnessing SLMs in Sponsored Search Retrieval 的实验对象包括主结果、消融、效率或线上/影子评估；每一类结果都要和论文主张一一对应。</p>
 <h3 id="3-1-实验设置与主结果">3.1 实验设置与主结果</h3>
-<p>实验设置：HARNESS-LM 在这一层要解决的是 论文通过离线 benchmark、消融、shadow 或线上指标验证核心主张。不同论文证据强度不同：有些给出线上 A/B，有些只给出 benchmark；有些可外部复现，有些依赖私有数据。阅读时必须把证据类型和可迁移性分开。 这不是一个孤立组件，而是把论文问题、数据口径、模型输入、训练目标、推理路径和评估证据连成同一条链路。读这篇论文时，我更关注它如何改变系统中原本被隐式处理的变量：哪些信号被保留，哪些状态被压缩，哪些反馈被校正，哪些成本被显式约束。只有这些变量能在本地日志、训练样本和线上服务中被复核，论文的结论才有迁移价值。 主结果解读：HARNESS-LM 在这一层要解决的是 主指标应与论文问题一一对应。如果论文说解决延迟，就必须看 p99 和吞吐；如果说解决投毒，就必须看攻击成功率；如果说解决推荐泛化，就必须看长尾、冷启动和跨任务结果。 这不是一个孤立组件，而是把论文问题、数据口径、模型输入、训练目标、推理路径和评估证据连成同一条链路。读这篇论文时，我更关注它如何改变系统中原本被隐式处理的变量：哪些信号被保留，哪些状态被压缩，哪些反馈被校正，哪些成本被显式约束。只有这些变量能在本地日志、训练样本和线上服务中被复核，论文的结论才有迁移价值。</p>
-<p><img src="../assets/images/harness-lm/2.jpg" alt="Table 4：precision 恢复、latency、throughput 与线上 A/B 指标"></p>
-<p>这张实验图表承担证据锚点作用。读它时不要只看某一行的最好数字，而要同时看 baseline、消融项、统计口径和工程成本。对 HARNESS-LM 来说，图表最值得关注的是论文主张是否在对应指标上成立，以及指标是否足以支撑进一步复现。若图中只有离线分数，没有线上或 shadow 证据，则结论只能算候选方向；若图中同时出现质量、成本和真实流量结果，迁移优先级可以提高，但仍要重新检查本地数据分布。</p>
-<p>做复现实验时，我不会只复刻论文主表里的平均分，而会先把评估集拆成来源、时间、任务难度和失败类型四个维度。平均分提升如果集中在高频简单样本，对生产价值有限；若提升来自冷启动、长尾、跨域或高风险样本，才值得进入下一轮。还要额外记录每个 baseline 的输入字段和服务成本，避免把更多特征、更长上下文或更高算力误读成模型结构本身的贡献。</p><p>实验表需要同时看 harness 的区分度和稳定性。若新测试集能拉开强弱模型差距，但同一模型多次评测波动很大，说明测试生成或评分仍不稳；若所有模型都接近满分，benchmark 就缺少诊断价值。复现时我会加入污染检查和近重复检查，尤其是把题目、答案、解释与公开训练语料做相似度检索，避免把看似新的评测样本实际变成已见问题。</p>
-<h3 id="3-2-消融和分桶应怎么看">3.2 消融和分桶应怎么看</h3>
-<p>消融阅读：HARNESS-LM 在这一层要解决的是 消融结果要证明收益来自核心模块，而不是额外参数或数据。本地复现时至少要比较完整方法、移除核心模块、替换成朴素启发式和旧系统方案。若完整方法只比弱基线好，结论不足；若移除关键模块后没有明显退化，论文解释也需要重新评估。 这不是一个孤立组件，而是把论文问题、数据口径、模型输入、训练目标、推理路径和评估证据连成同一条链路。读这篇论文时，我更关注它如何改变系统中原本被隐式处理的变量：哪些信号被保留，哪些状态被压缩，哪些反馈被校正，哪些成本被显式约束。只有这些变量能在本地日志、训练样本和线上服务中被复核，论文的结论才有迁移价值。 分桶阅读：HARNESS-LM 在这一层要解决的是 推荐和 agent 场景不能只看平均值。需要看新用户、长尾 item、冷启动内容、异常 query、长任务、跨会话记忆、低频工具调用和高延迟样本。很多风险只会在这些分桶里暴露。 这不是一个孤立组件，而是把论文问题、数据口径、模型输入、训练目标、推理路径和评估证据连成同一条链路。读这篇论文时，我更关注它如何改变系统中原本被隐式处理的变量：哪些信号被保留，哪些状态被压缩，哪些反馈被校正，哪些成本被显式约束。只有这些变量能在本地日志、训练样本和线上服务中被复核，论文的结论才有迁移价值。</p>
-<h3 id="3-3-结果边界">3.3 结果边界</h3>
-<p>边界解释：HARNESS-LM 在这一层要解决的是 论文结果只在作者设定的数据、模型和服务条件下成立。这不是否定论文价值，而是把它放回正确证据等级。若本地系统的数据生成策略、模型规模、候选集、延迟预算或安全边界不同，就要重新验证。 这不是一个孤立组件，而是把论文问题、数据口径、模型输入、训练目标、推理路径和评估证据连成同一条链路。读这篇论文时，我更关注它如何改变系统中原本被隐式处理的变量：哪些信号被保留，哪些状态被压缩，哪些反馈被校正，哪些成本被显式约束。只有这些变量能在本地日志、训练样本和线上服务中被复核，论文的结论才有迁移价值。 本轮没有把未核验的代码仓库、项目页或隐藏实验细节写成事实；报告里的指标均来自 arXiv abstract 或 PDF 公开信息。</p>
+<p>实验首先验证 teacher。Table 1 报告不同 teacher retriever 的性能，Table 2 研究 embedding dimension，Table 3 比较 prompt、features 和 loss。这里的结论是 teacher 本身必须足够强，并且训练设置会影响后续蒸馏上限。若 teacher 质量不足，student alignment 只能继承一个低质量空间。</p>
+<p>Table 4/5 检查 teacher quality 和 query alignment。论文文本指出，更强 teacher 带来更好的 student，但 teacher-student 差距也可能变大，说明蒸馏并不自动无损。固定 teacher 时，对齐细节决定 student 能否接近上界。Figure 2 的 alignment loss 曲线用于观察训练是否稳定收敛；如果 loss 下降但检索指标不涨，说明 L2 空间接近不等价于排序边界恢复。</p>
+<p><img src="../assets/images/harness-lm/2.jpg" alt="Table 9：HLM query encoder 的 latency-quality trade-off"></p>
+<p>补充看这张表时，latency-quality trade-off 是 HARNESS-LM 最贴近生产的证据。Sponsored search 召回必须在很短时间内生成查询向量并进入 ANN 检索，因此 40ms 到 6.8ms 级别的差异会直接影响能否上线。表中若质量下降很小而延迟下降显著，就说明三阶段训练没有只追求离线精度，而是在服务预算内重新分配模型容量。</p>
+<p>这张 latency-quality 表是 HARNESS-LM 最接近部署决策的证据。它把 student 规模、维度、延迟、吞吐和检索质量放在一起，迫使读者同时考虑 precision 和 p99 成本。读表时不要只选最高 precision，也不要只选最低 latency；真正可用的点应位于 Pareto 前沿，并满足线上广告召回预算。论文报告的 40.96ms 到 6.8ms 延迟下降说明压缩确实有效，但 precision 小幅下降也提醒我们：小模型上线前必须用 shadow traffic 和 A/B 验证商业指标。</p>
+<h3 id="3-2-消融-效率和分桶证据">3.2 消融、效率和分桶证据</h3>
+<p>Table 6 研究剪枝。文本提到剪掉少数层时质量只小幅下降，而更多剪枝会带来明显损失。这为部署提供选择：如果线上预算极紧，可以接受一定 precision 下降换取 latency；如果业务对召回质量更敏感，就选择较少剪枝的 student。</p>
+<p>Table 7/8 分析 contrastive refinement 和 asymmetric fine-tuning。CR 的价值在于修复 alignment 不能覆盖的 hard-negative 边界；asymmetric fine-tuning 则比较 query side 与 document side 的训练选择。赞助搜索里 document/ad side 往往离线可算，因此 query side 的实时成本更关键。</p>
+<h3 id="3-3-结果边界与复现风险">3.3 结果边界与复现风险</h3>
+<p>Table 9 是工程决策表。论文文本提到某设置可实现约 6 倍 latency reduction，从 40.96ms 到 6.8ms，同时 precision 从 64.3 降到 63.1，约 1.1% 下降。这个结果不应只理解为“更快”，而应读成质量-延迟 Pareto：业务需要决定这 1.1% precision 是否能被吞吐、成本和线上 A/B 收益抵消。Table 10 的线上 A/B 进一步验证 revenue、click、impression lift，证据等级高于纯离线 benchmark，但仍需看显著性、流量分层和广告预算影响。</p>
+<p>补充实验时，Table 2 的 dimension 分析很实用。embedding 维度越大通常质量越好，但 index 内存、带宽和 query-doc scoring 成本也增加。论文在 d=128 等部署友好设置下比较结果，说明它考虑的是线上可用向量，而不是无限增大维度。</p>
+<p>Table 3 的 prompt/features/loss 消融说明 teacher 不是黑盒。广告检索输入中可能包含 query 文本、广告文本、landing page、历史点击等特征，不同组合会影响 teacher 上界。若复现只用 raw query-document 文本，可能低估方法。</p>
+<p>Figure 3 的二维投影展示训练阶段中 query 和 document embedding 如何靠近或分离。可视化不是主要指标，但能帮助发现 alignment 后空间是否坍缩、CR 后正负样本是否分开。对工业检索，embedding 空间形态直接影响 ANN index 的稳定性。</p>
+<p>实验中的 Table 10 线上 A/B 应放在证据链末端。离线 P@100 证明模型能检索相关广告，latency 表证明它能部署，A/B 才证明它在真实拍卖和用户行为中有收益。三个证据缺一不可。</p>
+<p>Table 11 的 oracle input 示例也值得看。它说明 raw query 之外的信息可能显著帮助 teacher，但这些信息未必线上可用。蒸馏时要小心 teacher 使用了 student 推理时拿不到的特征，否则 student 学到的是不可实现的上界。</p>
+<p>实验补充一个读法：HARNESS-LM 的每个表都对应 recipe 中的一个决策。Table 1 选 teacher，Table 2 选维度，Table 3 选 teacher 训练设置，Table 4/5 选 alignment，Table 6 选剪枝强度，Table 7/8 选 CR/fine-tuning，Table 9 选部署点，Table 10 验证线上收益。这个顺序就是复现路线。</p>
+<p>如果本地只复现最后的 student，而不复现前面的决策表，就很难知道失败原因。可能是 teacher 不够强，可能是 alignment 语料不覆盖，可能是剪枝过度，也可能是 CR negative 太弱。</p>
+<p>实验补充一点：Table 9 的 6x latency reduction 应结合硬件利用率看。若延迟下降但 GPU 利用率低，成本未必最优；若吞吐上升且 precision 保持，才是更好的部署点。</p>
+<p>线上 A/B 还需要观察预算消耗。更好的检索可能让某些广告更快耗尽预算，影响后续流量分布。广告系统的模型评估不能只看即时 click。</p>
+<p>实验上，建议把 Table 9 的 Pareto 点投到成本模型中：GPU 数、QPS、batch size、index latency 和业务收益一起算。只有质量收益覆盖服务成本，才是真正可部署。</p>
+<p>实验补充：建议在 P@100 之外加入 recall@k、NDCG、query latency p95/p99、GPU memory 和 ANN search time。广告检索瓶颈可能不在 encoder 本身，而在整体召回链路。</p>
 <h2 id="4-总结">4. 总结</h2>
 <h3 id="4-1-我的判断">4.1 我的判断</h3>
-<p>我会把 HARNESS-LM 放进“值得复现/跟踪”的队列。它的价值不是简单给出一个新模型名，而是把 Sponsored Search / Retrieval Distillation / Ads Ranking 里的关键变量转成可审计机制。短期应先做只读复现和 shadow 分析，中期再决定是否进入主链路。</p>
-<h3 id="4-2-局限与风险">4.2 局限与风险</h3>
-<ul>
-<li>Bing Ads benchmark 的负样本、流量分层和 A/B 置信区间未在摘要中完全展开。</li>
-<li>L2 对齐可能继承 teacher 偏差，并在长尾 query 或冷启动广告上表现不均。</li>
-<li>外部复现难度高，依赖广告系统私有日志、特征和线上策略。</li>
-<li>precision 恢复 98% 不等于商业目标完全等价，仍受竞价、预算和探索策略影响。</li>
-</ul>
-<h3 id="4-3-后续跟进">4.3 后续跟进</h3>
-<ul>
-<li>复现 teacher-student query embedding 对齐，观察不同维度和模型规模的 Pareto 曲线。</li>
-<li>补充分行业、长尾 query、新广告冷启动分桶。</li>
-<li>用 shadow traffic 检查 student 与 teacher 在排序边界样本上的差异。</li>
-</ul>
-<p>本地使用 HARNESS-LM 的方式应偏向内部评测扩容。对推荐或 agent 项目，可以从线上失败样本、人工标注样本和产品需求文档中抽取 seed，再生成覆盖边界条件的测试 harness。生成后必须经过规则校验和少量人工审核，不能直接把模型生成题当作权威评测。</p><p>这篇论文的风险在于评测系统可能被生成模型本身的偏好牵引。若用相近模型生成题、解题和评分，评测会过度奖励同类表达。更好的做法是让生成模型、被测模型和裁判模型尽量异构，并保留可人工复核的题目来源链。</p>
-<p>复现 HARNESS-LM 时，我会把重点放在评测样本生命周期。每道题从哪个 seed 来、经过哪次生成、被哪个过滤器保留、是否人工抽检，都应进入元数据。没有这些记录，后续模型分数变化很难解释，也无法判断是模型能力提升还是评测集分布改变。</p><p>这个方向尤其适合补足内部灰盒测试。推荐系统可以把线上投诉、低置信 query、边界内容和策略冲突转成测试 harness；agent 系统可以把工具失败、权限拒绝、长上下文遗忘和安全拦截转成测试 harness。关键是题目要服务于诊断，而不是追求数量。</p><p>我会谨慎处理自动评分。生成式评测常见问题是裁判模型偏好某种表达风格，导致被测模型学会迎合裁判。更稳的做法是把自动评分当作筛选信号，再保留一小批人工金标题作为长期校准集。</p>
-<p>我会给 HARNESS-LM 设置一个明确的进入下一轮门槛：先证明它在 自动评测 harness 生成 里的核心机制可被本地数据完整记录，再证明这些记录能解释指标变化。这里的核心机制包括 seed 文档、生成 prompt、过滤器、去重、人工抽检。如果日志里缺少其中任何一环，就不应直接比较最终分数，因为分数变化可能来自样本选择、缓存、过滤规则或评估口径，而不是论文方法本身。这个门槛看似繁琐，但它能避免把一次漂亮的离线结果误判成可持续的系统能力。</p><p>复现计划上，我会采用小规模、强对照、可回滚的路线。第一步只选一批稳定历史样本，固定数据快照和基线版本；第二步实现论文方法中最小但完整的一条路径，不引入额外特征或规则；第三步把 区分度、稳定性、污染率、人工金标一致性 放进同一张表。只有当方法在质量、成本和失败样本上都说得通，才进入 shadow 或小流量。若它只改善一个平均指标，却制造更多无法解释的失败样本，就应停止在研究跟踪层。</p><p>这篇论文还需要和近几天的其他候选放在一起读。Agent 方向的论文正在把 skill、memory、context 和 evaluation 都变成可优化对象；推荐方向的论文则在把用户历史、语义 token、生成候选和跨 surface 任务拉进同一套建模框架。HARNESS-LM 的位置正好说明一个趋势：未来有效的系统改进不太可能只靠单个模型结构，而会来自数据契约、状态管理、评估闭环和服务预算的共同约束。</p><p>因此我对 HARNESS-LM 的短期结论是谨慎积极。它值得进入精读和小实验，但不应被直接包装成确定性的业务方案。下一步最重要的不是复刻论文里的所有实验，而是找到一到两个本地最痛的 failure mode，让论文方法在这些 failure mode 上接受可解释检验。</p>
-<p>具体到下一步，我会先做一个一天内能完成的小验证：从真实失败样本出发生成一批小 harness，保留 seed、题目、答案、评分标准和人工复核结论。 这个验证不追求论文同规模结果，而是确认输入、输出、失败样本和人工判断之间能否闭环。若小验证阶段已经出现字段不可得、结果无法解释或成本明显超预算，就应把 HARNESS-LM 暂时留在观察列表，不继续投入大规模训练。</p><p>同时要保留负面样本。很多论文复现失败不是因为主流程写不出来，而是因为失败样本被平均指标吞掉。对 HARNESS-LM 来说，每一轮都应保存若干最有代表性的坏例子：模型自信但错误的样本、成本高但收益低的样本、人工难以判断的样本，以及旧系统表现更好的样本。这些样本会决定后续迭代方向，也能防止我们只围绕成功案例优化。</p>
-<p>最后一个复核点是团队协作成本。HARNESS-LM 如果进入实验，产物不能只服务论文阅读者，还要让训练、平台、策略和评估同学都能判断自己负责的边界。最实用的交付不是单页结论，而是一份包含输入字段、配置版本、失败样本、回滚方式和负责人分工的实验卡片。实验卡片里尤其要写清：生成题目是否真正覆盖线上失败类型而不是重复模型熟悉表述。如果这个问题回答不了，说明方法虽然新，但还没有变成团队可以共同维护的工程对象。</p><p>因此我会把本笔记作为后续实验的起点，而不是终点。今天的阅读已经确认 HARNESS-LM 值得跟踪；下一轮需要把论文中的抽象模块降到可执行 checklist，并把每个 checklist 项绑定到本地数据表、日志或脚本。只有完成这一步，才有资格讨论更大规模的训练、线上 shadow 或真实 A/B。</p>
-<p>最后需要强调：HARNESS-LM 的结果不应被解读为确定性上线建议。它更适合作为下一轮实验设计的依据：把论文中的关键变量、对照组和失败样本先整理清楚，再决定是否投入更高成本复现。</p></article></div>
+<p>我的判断是，HARNESS-LM 是广告检索和工业 RAG retriever 都值得参考的蒸馏流程。它的价值不在某个单独 loss，而在 teacher 上界、表示对齐、结构压缩、contrastive refinement 和线上 A/B 构成完整链条。</p>
+<h3 id="4-2-工程启发与复现建议">4.2 工程启发与复现建议</h3>
+<p>工程启发包括：先训练强 teacher 再蒸馏，不要用弱 teacher 限制 student；query side 是实时瓶颈，应重点压缩；alignment 后仍需任务级 CR；latency-quality 表比单一离线指标更重要；线上 A/B 必须同时看 revenue、click、impression 和预算约束。</p>
+<h3 id="4-3-局限与后续跟进">4.3 局限与后续跟进</h3>
+<p>局限包括：Bing Ads 数据和负样本策略不可公开复现；teacher 偏差会被 student 继承；广告检索受竞价和预算影响，precision 不等于商业收益；剪枝和低维表示可能伤害长尾 query；线上收益的显著性和分桶细节未完全展开。后续应复现 teacher-student query alignment、画不同维度和剪枝强度的 Pareto 曲线、加入长尾 query 与新广告分桶，并比较 HLM 与直接小模型 LoRA 的差异。</p>
+<p>后续复现应先构建小型 teacher-student 检索实验，固定 query/document 切分、hard negative、维度和 ANN index，再比较 teacher、直接小模型 fine-tune、alignment student、alignment+CR student。除 P@100 外，还要记录 latency、throughput、index size、长尾 query 和新广告分桶。</p>
+<p>后续复现要特别关注 teacher 是否使用训练期特权信息。若 teacher 看到了线上 query encoder 看不到的特征，alignment student 可能只能近似表面几何，无法在真实请求中保持收益。实验报告应单独列出 train-only features 和 online-available features。</p>
+<p>总结补充：我会把 HARNESS-LM 视为“检索模型生产化 recipe”。它适合广告、RAG、搜索召回等任何 query path 严格受限的系统。下一步最值得做的是把各阶段决策表自动化，形成从 teacher 到 student 的可重复流水线。</p>
+<p>最终我会把 HARNESS-LM 作为检索蒸馏标准模板，但迁移前必须确认 teacher 特征、student 线上输入和 index 结构三者一致。</p>
+<p>总结上，HARNESS-LM 可作为工业检索压缩模板，但必须和 score calibration、双写 shadow 和滚动 hard negative 更新一起使用。</p></article></div>
     </main>
   </body>
 </html>
