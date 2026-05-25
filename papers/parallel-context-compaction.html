@@ -4,9 +4,9 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Parallel Context Compaction for Long-Horizon LLM Agent Serving：长程 LLM Agent Serving 的并行上下文压缩 | liuzhao09</title>
-    <meta name="description" content="把长程 agent 的同步上下文压缩改成可并行的分块 compaction，使摘要长度、触发阈值、block size、TPOT 和任务准确率能被一起调度。 本笔记按当前流水线的精读要求重写：先记录公式清单、方法模块清单和图表清单，再围绕论文原文的任务设定、训练/推理链路、实验表和工程边界展开。">
+    <meta name="description" content="本文把长程 agent 的阻塞式串行上下文压缩改成并行分块压缩，让 block size、触发阈值、输出摘要长度、wall time、TPOT 与任务准确率可以一起评估。新版笔记按服务流程重写，并纳入论文的关键效率表。">
     <link rel="stylesheet" href="../assets/css/site.css">
-    <script>window.MathJax = { tex: { inlineMath: [['$', '$'], ['\(', '\)']], displayMath: [['$$', '$$'], ['\[', '\]']] }, svg: { fontCache: 'global' } };</script>
+    <script>window.MathJax = { tex: { inlineMath: [['$', '$'], ['\\(', '\\)']], displayMath: [['$$', '$$'], ['\\[', '\\]']] }, svg: { fontCache: 'global' } };</script>
     <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
   </head>
   <body class="paper-page">
@@ -14,145 +14,141 @@
       <nav class="nav" aria-label="主导航"><a class="brand" href="../index.html"><span class="brand-mark">LZ</span><span>liuzhao09</span></a><div class="nav-links"><a href="../index.html">首页</a><a href="../papers.html">论文库</a></div></nav>
     </header>
     <main class="page-shell paper-shell">
-      <section class="paper-hero note-hero"><div><p class="breadcrumb"><a href="../papers.html">论文库</a> / parallel-context-compaction</p><h1 class="paper-title">Parallel Context Compaction for Long-Horizon LLM Agent Serving：长程 LLM Agent Serving 的并行上下文压缩</h1><p class="paper-dek">把长程 agent 的同步上下文压缩改成可并行的分块 compaction，使摘要长度、触发阈值、block size、TPOT 和任务准确率能被一起调度。 本笔记按当前流水线的精读要求重写：先记录公式清单、方法模块清单和图表清单，再围绕论文原文的任务设定、训练/推理链路、实验表和工程边界展开。</p><div class="tag-row"><span class="tag">Paper Note</span><span class="tag">Daily Research</span><span class="tag">2026-05-25</span></div></div><aside class="paper-meta" aria-label="论文信息"><dl><div><dt>类别</dt><dd>LLM</dd></div><div><dt>同步日期</dt><dd>2026-05-25</dd></div><div><dt>arXiv</dt><dd>2605.23296</dd></div></dl></aside></section>
+      <section class="paper-hero note-hero"><div><p class="breadcrumb"><a href="../papers.html">论文库</a> / parallel-context-compaction</p><h1 class="paper-title">Parallel Context Compaction for Long-Horizon LLM Agent Serving：长程 LLM Agent Serving 的并行上下文压缩</h1><p class="paper-dek">本文把长程 agent 的阻塞式串行上下文压缩改成并行分块压缩，让 block size、触发阈值、输出摘要长度、wall time、TPOT 与任务准确率可以一起评估。新版笔记按服务流程重写，并纳入论文的关键效率表。</p><div class="tag-row"><span class="tag">Paper Note</span><span class="tag">Daily Research</span><span class="tag">2026-05-25</span></div></div><aside class="paper-meta" aria-label="论文信息"><dl><div><dt>类别</dt><dd>LLM</dd></div><div><dt>同步日期</dt><dd>2026-05-25</dd></div><div><dt>arXiv</dt><dd>2605.23296</dd></div></dl></aside></section>
       <div class="article-layout note-layout"><nav class="toc" aria-label="文章目录"><a class="toc-l1" href="#1-背景和问题">1. 背景和问题</a>
 <a class="toc-l1" href="#2-方法">2. 方法</a>
-<a class="toc-l2" href="#2-1-公式清单与方法地图">2.1 公式清单与方法地图</a>
-<a class="toc-l2" href="#2-2-论文核心流程">2.2 论文核心流程</a>
-<a class="toc-l2" href="#2-3-训练目标与优化控制">2.3 训练目标与优化控制</a>
-<a class="toc-l2" href="#2-4-推理链路-服务约束与系统接入">2.4 推理链路、服务约束与系统接入</a>
-<a class="toc-l2" href="#2-5-复现时应检查的实现细节">2.5 复现时应检查的实现细节</a>
-<a class="toc-l2" href="#2-6-模块间信号流与落地检查">2.6 模块间信号流与落地检查</a>
+<a class="toc-l2" href="#2-1-串行-compaction-baseline-与阻塞成本">2.1 串行 compaction baseline 与阻塞成本</a>
+<a class="toc-l2" href="#2-2-snapshot-partition-与-target-block">2.2 snapshot、partition 与 target block</a>
+<a class="toc-l2" href="#2-3-parallel-workers-与-merge-summary">2.3 parallel workers 与 merge summary</a>
+<a class="toc-l2" href="#2-4-threshold-block-size-与-prompt-style">2.4 threshold、block size 与 prompt style</a>
+<a class="toc-l2" href="#2-5-指标闭环-accuracy-tpot-与-throughput">2.5 指标闭环：accuracy、TPOT 与 throughput</a>
 <a class="toc-l1" href="#3-实验结果">3. 实验结果</a>
-<a class="toc-l2" href="#3-1-实验设置与主结果">3.1 实验设置与主结果</a>
-<a class="toc-l2" href="#3-2-消融-效率和分桶证据">3.2 消融、效率和分桶证据</a>
-<a class="toc-l2" href="#3-3-结果边界与复现风险">3.3 结果边界与复现风险</a>
-<a class="toc-l1" href="#4-总结">4. 总结</a>
-<a class="toc-l2" href="#4-1-我的判断">4.1 我的判断</a>
-<a class="toc-l2" href="#4-2-工程启发与复现建议">4.2 工程启发与复现建议</a>
-<a class="toc-l2" href="#4-3-局限与后续跟进">4.3 局限与后续跟进</a></nav><article class="article markdown-body"><p>Parallel Context Compaction for Long-Horizon LLM Agent Serving：长程 LLM Agent Serving 的并行上下文压缩</p>
-<p>论文入口：<a href="https://arxiv.org/abs/2605.23296">arXiv:2605.23296</a>。作者：Musa Cim, Burak Topcu, Chita Das, Mahmut Taylan Kandemir。机构口径：The Pennsylvania State University。代码/项目页状态：未核验到独立开源仓库；以 arXiv/PDF 实验设置为准。主类别：LLM；公开日期：arXiv submitted 2026-05-22。</p>
-<p>把长程 agent 的同步上下文压缩改成可并行的分块 compaction，使摘要长度、触发阈值、block size、TPOT 和任务准确率能被一起调度。 本笔记按当前流水线的精读要求重写：先记录公式清单、方法模块清单和图表清单，再围绕论文原文的任务设定、训练/推理链路、实验表和工程边界展开。</p>
+<a class="toc-l2" href="#3-1-output-token-随输入长度变化">3.1 output token 随输入长度变化</a>
+<a class="toc-l2" href="#3-2-阈值与-compaction-占比">3.2 阈值与 compaction 占比</a>
+<a class="toc-l2" href="#3-3-hotpotqa-与-locomo-准确率">3.3 HotpotQA 与 LoCoMo 准确率</a>
+<a class="toc-l2" href="#3-4-hotpotqa-效率大表">3.4 HotpotQA 效率大表</a>
+<a class="toc-l2" href="#3-5-locomo-效率大表">3.5 LoCoMo 效率大表</a>
+<a class="toc-l2" href="#3-6-matched-decode-速度对照">3.6 matched decode 速度对照</a>
+<a class="toc-l2" href="#3-7-prompt-详细度影响">3.7 prompt 详细度影响</a>
+<a class="toc-l1" href="#4-总结">4. 总结</a></nav><article class="article markdown-body"><p>Parallel Context Compaction for Long-Horizon LLM Agent Serving：长程 LLM Agent Serving 的并行上下文压缩</p>
+<p>论文入口：<a href="https://arxiv.org/abs/2605.23296">arXiv:2605.23296</a>。作者：Musa Cim, Burak Topcu, Chita Das, Mahmut Taylan Kandemir。机构口径：The Pennsylvania State University。主类别：LLM；公开日期：2026-05-22。</p>
+<p>本文把长程 agent 的阻塞式串行上下文压缩改成并行分块压缩，让 block size、触发阈值、输出摘要长度、wall time、TPOT 与任务准确率可以一起评估。新版笔记按服务流程重写，并纳入论文的关键效率表。</p>
 <h2 id="1-背景和问题">1. 背景和问题</h2>
-<p>长程 agent 会不断积累系统提示、用户轮次、工具调用、观察结果和中间计划。当历史超过上下文窗口时，常见做法是调用一个 LLM summarizer 把整段历史压缩成摘要，再继续执行任务。这个策略有两个缺陷：摘要是有损的，可能遗忘关键约束；压缩调用是阻塞的，可能让 agent 推理停几十秒。Parallel Context Compaction 正是在这个背景下提出：把一次性串行压缩拆成多个并行块，让 compaction 成为可调服务参数。</p>
-<p>论文的视角很工程化。它不只问摘要质量，还问 output tokens 与 input length 的关系、prompt variant 的稳定性、不同模型和 block size 的 TPOT、E2E wall time 中 compaction 占比、以及 HotpotQA/LoCoMo 上准确率是否被破坏。这些指标共同决定一个 serving 系统能否上线。若只看 token 节省而忽略 wall time，agent 仍会被阻塞；若只看速度而忽略准确率，系统会更快地产生错误。</p>
-<p>对推荐系统也有直接类比。推荐会话、搜索改写、多轮客服和长期用户画像同样需要压缩历史状态。一个可用的压缩方案必须知道哪些信息可以并行摘要，哪些时间顺序、用户最新修正或工具结果必须保留。本文的贡献不在“摘要”这个概念本身，而在把摘要压缩的触发阈值、块大小、输出长度和服务延迟纳入统一评估。</p>
-<p>更具体地说，Parallel Context Compaction for Long-Horizon LLM Agent Serving 的问题不应被读成单点模型改进，而应读成系统状态如何被建模、验证和服务化。旧链路通常把关键状态分散在人工规则、离线日志、缓存、业务策略或一次性 prompt 里，最终只能看到平均指标，却无法解释指标变化来自哪里。本文把这些状态拉回可观察接口：输入是什么，输出是什么，何时训练，何时推理，失败时如何定位。</p>
-<p>这也是它和今天其他论文共同的地方：LLM 方向在处理 skill、memory、context，推荐方向在处理 user story、retriever distillation 和 generative backbone。它们都说明模型能力越来越依赖外部状态管理。阅读这篇论文时，我会持续追问三个问题：第一，论文是否明确记录了状态来源；第二，方法是否有独立验证或对照；第三，结果是否足以支持生产迁移，而不是只在某个离线表里好看。</p>
-<p>补充背景时，要把 context compaction 看作 serving 问题，而不是单纯 prompt 摘要。长程 agent 一旦在真实环境运行，历史里会混合用户指令、工具返回、错误尝试、文件路径、外部状态和安全约束。压缩错一条普通聊天内容可能影响不大，压缩错一个文件路径或最新用户修正就会导致任务失败。论文之所以强调 wall time、TPOT 和 accuracy，是因为 compaction 的每一次触发都会影响用户等待和后续行为正确性。</p>
-<p>传统串行压缩还有触发频率问题。阈值 τ 太低，系统频繁压缩，每次都是阻塞调用；阈值太高，模型长时间背负巨大上下文，直到触发时又产生一次大停顿。并行 compaction 试图改变这个成本结构：把大停顿拆成多个小 worker，同时保持摘要长度可控。</p>
-<p>对本地 agent 平台来说，这篇论文的背景问题非常具体：我们需要决定何时压缩、压缩哪部分、用哪个模型、保留多少最近原文、如何处理摘要冲突、以及失败时能否回放原始历史。这些都是服务接口问题，不是摘要 prompt 写得好不好。</p>
-<p>背景还可以从“可压缩性”角度理解。长历史并不是每个 token 都等价：寒暄、过期计划和重复观察可压缩；最新指令、失败原因、工具返回和安全规则不能轻易压缩。Parallel compaction 的价值在于给可压缩部分并行处理，但它并没有自动解决哪些信息不可压缩的问题。这部分仍需要系统设计。</p>
-<p>背景还可以用“摘要误差会累积”来理解。串行 compaction 每次把旧历史压成新摘要，下一次又压缩包含摘要的历史；一旦早期摘要遗漏了约束，后面很难恢复。并行 compaction 不直接解决误差累积，但它让压缩过程更可控：可以保留最近原文、独立检查每个块，并在 merge 时标记冲突。</p>
-<p>补充背景：很多 agent 失败并不是因为模型不知道答案，而是因为上下文管理把关键状态藏没了。长历史越多，模型越容易在过期计划、重复观察和最新指令之间混淆。并行压缩如果设计得好，可以减少无关历史干扰；设计不好，则会把混淆提前固化进摘要。</p>
+<p>长程 agent 会不断积累系统提示、用户指令、工具调用、观察结果、中间计划和错误恢复记录。当历史接近上下文窗口上限时，常见做法是调用一个 LLM summarizer 把整段历史压缩成摘要，再继续执行任务。这种串行压缩有两个明显缺陷：摘要本身有损，可能丢失关键约束；压缩调用又是阻塞的，会让用户等待和 agent 执行同时停下来。</p>
+<p>Parallel Context Compaction 的出发点是把 compaction 视为 serving 问题，而不是单纯 prompt 摘要问题。一个可上线的 agent 系统需要同时关心准确率、端到端 wall time、time per output token、压缩触发频率和输出 token 占比。若只看摘要更短，可能把任务做错；若只看速度更快，可能把关键状态压没。论文因此用 HotpotQA 和 LoCoMo 同时检查质量与成本。</p>
+<p>本文特别关注 output token 与 input length 的关系。串行摘要在长输入上会生成较长输出，输出 token 占比会随输入长度变化；当摘要模型本身很慢时，压缩会成为长程 agent 的主要阻塞点。并行压缩试图把历史分成多个 target block，让 worker 同时生成局部摘要，再 merge 成 compact context。</p>
+<p>对推荐、搜索和多轮客服也有相似问题。用户长会话、长期画像和跨工具轨迹都需要压缩；系统需要知道哪些内容可以并行摘要，哪些内容必须保留原文，例如最新用户修正、工具返回、文件路径和安全约束。并行 compaction 降低的是服务延迟，但仍需要上层策略决定不可压缩内容。</p>
+<p>重写笔记时，我把方法按论文的 serving pipeline 写：先看串行 baseline 的阻塞成本，再看 snapshot/partition，接着看 parallel workers 和 merge，最后讨论 block size、threshold 与 prompt variant。实验部分保留 Table 1/2 的动机表、Figure 1/4 的框架与准确率，以及 Table 7/8/9/10 的效率明细。</p>
+<p>论文的边界也要明确。并行压缩不会自动解决摘要真实性、冲突合并或安全规则保留问题。若局部摘要遗漏了关键条件，merge 再快也无法恢复。它真正贡献的是把压缩过程拆成可调服务组件，使工程师可以用 block size、threshold 和 prompt style 在速度与准确率之间选点。</p>
+<p>从 agent 工程角度，本文最值得借鉴的是指标组合。压缩方案至少应报告准确率、compaction decode token、QA decode token、E2E wall time 和 throughput；只报告 token savings 不足以说明可用。论文的大表虽然复杂，但正好暴露了不同模型和 block size 下的 Pareto 差异。</p>
+<p>长程 agent 的上下文并不是普通文本堆叠。里面可能包含用户最后一次修正、工具返回的文件路径、失败尝试、系统约束和阶段性计划。压缩时若把这些信息等同处理，模型会更快但更容易出错。论文用服务指标而不是单纯摘要长度评估，正是因为上下文管理直接影响任务正确性。</p>
+<p>串行 compaction 的痛点不仅是慢，也包括不可预测。用户可能在一次任务中等待多个压缩点，每个压缩点都调用大模型生成摘要。并行化把大停顿拆成多个 worker 的最大耗时加 merge 耗时，使工程师能够通过 block size 和 worker 数量控制延迟分布。</p>
+<p>不过并行化也引入新问题：块与块之间的指代关系、时间顺序和冲突信息可能被局部摘要打散。真正可用的系统需要保留最近原文、给摘要加版本、在 merge 阶段标记不确定内容，并能回放原始上下文。</p>
+<p>这篇论文适合检验实验图表是否完整。Table 7 和 Table 8 很宽，若裁掉列名或只截中间局部，读者无法判断 wall time、throughput、decode token 之间的关系。因此新版笔记保留了完整大表。</p>
+<p>并行压缩的另一个背景是成本隔离。多个 worker 可以在不同资源池中运行，系统能把摘要延迟从主推理链路中部分拆开；但 merge 仍然是关键路径，所以它必须短、稳、可监控。</p>
+<p>长上下文任务还会遇到用户最新指令优先级问题。压缩历史时若没有明确保留最近轮次，模型可能按照旧计划继续执行。论文的框架给了调度空间，但真实系统仍需定义 recency policy。</p>
+<p>从这篇论文的阅读顺序看，宾州州立-ParallelCompaction 还要求把问题定义、系统边界和实验证据先分开。触发阈值、分块摘要、并行 worker、merge 和 serving 指标 都会影响最终结论，如果背景只写成“方法有效”，读者无法判断收益来自任务设定、数据规模、工程约束还是评估协议。第 1 次补充只用于补足这一边界说明。</p>
 <h2 id="2-方法">2. 方法</h2>
-<p>方法章是本笔记的主体。先列公式和图表清单，再按论文真实模块解释训练与推理链路。主文对象包括 Table 1/2 的输出长度和 compaction wall-time 占比、Table 3 的 benchmark 统计、Figure 1 的串行/并行概览、Table 4 的模型设置、Figure 2/3 的输出 token 稳定性、Figure 4 的任务准确率、Table 7/8 的 HotpotQA/LoCoMo block-size 结果、Table 9 的 matched decode 速度、Table 10 与 Figure 5 的 gpt-oss-120B 分析。本文截图保留 Figure 1 和 Figure 4，其他表格在实验章解释。</p>
-<h3 id="2-1-公式清单与方法地图">2.1 公式清单与方法地图</h3>
-<p><strong>长程历史。</strong></p>
-<div class="math-display">$$
-H_t=[s,u_1,a_1,\ldots,u_{t-1},a_{t-1}]
-$$</div>
-<p>符号解释：H_t 包含系统提示 s、历史用户请求 u 和 agent 响应/工具行为 a，是 compaction 的输入对象。 这条公式在笔记中的作用是把论文描述转成可检查变量，复现时应能在数据、日志或配置中找到对应字段。</p>
-<p><strong>串行压缩。</strong></p>
-<div class="math-display">$$
-\widehat{H}_t=LLM_{compact}(H_t\oplus p_c)
-$$</div>
-<p>符号解释：p_c 是压缩提示；串行方法把完整历史一次性送入 summarizer，输出新的摘要历史。 这条公式在笔记中的作用是把论文描述转成可检查变量，复现时应能在数据、日志或配置中找到对应字段。</p>
-<p><strong>并行分块数量。</strong></p>
-<div class="math-display">$$
-N=\lceil |X|/B 
-ceil
-$$</div>
-<p>符号解释：X 是待压缩历史，B 是 block size；块越小，worker 越多，单 worker 输入越短，但合并成本和跨块依赖风险更高。 这条公式在笔记中的作用是把论文描述转成可检查变量，复现时应能在数据、日志或配置中找到对应字段。</p>
-<p><strong>延迟分解。</strong></p>
-<div class="math-display">$$
-T_{parallel}\approx \max_j T_{compact}(X_j)+T_{merge}
-$$</div>
-<p>符号解释：并行压缩的收益来自取最大 worker 时间而不是总和，但需要额外合并阶段。这个式子是服务层理解，不是论文编号公式。 这条公式在笔记中的作用是把论文描述转成可检查变量，复现时应能在数据、日志或配置中找到对应字段。</p>
-<h3 id="2-2-论文核心流程">2.2 论文核心流程</h3>
-<p>方法从串行 compaction 的限制开始。串行方案在历史达到阈值 τ 后，把完整历史交给一个 LLM 压缩，再把摘要作为后续上下文。论文指出，prompt engineering 不能从根本上解决两个问题：输出长度随输入增长并不稳定，且 compaction 调用会阻塞 agent 主循环。Table 1/2 的动机数据表明，当输入从 2k 增长到 96k 时，输出长度和 compaction wall time 都会成为瓶颈；低阈值还会让 compaction 频繁触发。</p>
-<p>并行 compaction 的核心是把待压缩历史 X 切成 N 个 block，每个 block 独立调用 summarizer。block size B 决定 worker 数量：B 越小，并发度越高，但每个摘要更局部；B 越大，信息完整性更好，但并行收益下降。论文并没有假设一个固定最佳 B，而是在 HotpotQA 和 LoCoMo 上扫描多个 block size，比较准确率、输出 token、TPOT 和 wall time。</p>
-<p><img src="../assets/images/parallel-context-compaction/1.jpg" alt="Figure 1：Sequential 与 Parallel Context Compaction 的服务流程对比"></p>
-<p>补充看这张流程图时，关键是区分请求关键路径上的阻塞时间。Sequential compaction 把长历史交给一次摘要调用，主 agent 必须等整个压缩完成；parallel compaction 把历史分块后并行摘要，再用较短的 merge 阶段汇总。它并不声称每个块摘要都独立完美，而是通过并行化降低服务等待，同时用最终 merge 维护全局一致性。</p>
-<p>这张图清楚展示了串行和并行压缩的服务差异。串行路径在阈值触发后等待一个完整 compaction 调用返回，主 agent 在这段时间内阻塞；并行路径把历史拆成多个块，让多个 worker 同时摘要，再由合并器产生压缩上下文。图中最值得注意的是延迟路径：并行方案的理论收益来自把总压缩时间变成最慢 worker 的时间加 merge 时间。与此同时，信息风险也从单个摘要器的遗漏变成“切块遗漏”和“合并冲突”两类问题，因此图里的合并节点是方法成败的关键。</p>
-<h3 id="2-3-训练目标与优化控制">2.3 训练目标与优化控制</h3>
-<p>切块边界是方法能否成功的关键。若按固定 token 切块，可能把问题和证据切开；若按会话轮次切块，可能保留语义边界但导致块长度不均；若按工具调用边界切块，适合 agent trace 但需要结构化日志。论文实验主要研究 block size 对服务指标的影响，本地复现时应额外测试会话边界和工具边界，因为生产 agent 的历史并不是均匀文本。</p>
-<p>并行 worker 的输出还需要合并。合并阶段不能把所有局部摘要简单拼接，否则会产生冗余、冲突和顺序混乱。合理的 merge 应保留最近原文、长期摘要和结构化状态三层：最近原文用于处理用户最新约束，长期摘要用于保持背景，结构化状态用于记录任务目标、文件路径、工具结果和未完成计划。论文把 parallel compaction 作为服务策略，但实际落地必须把 merge 规则和风险监控补齐。</p>
-<h3 id="2-4-推理链路-服务约束与系统接入">2.4 推理链路、服务约束与系统接入</h3>
-<p>服务指标方面，论文关注 TPOT、E2E wall time、compaction fraction 和 accuracy。TPOT 衡量 token 生成速度，E2E wall time 衡量用户等待，compaction fraction 说明压缩在总耗时中占多少。如果一个配置 TPOT 低但准确率掉很多，不能上线；如果准确率保持但 compaction fraction 仍高，说明并行度不足或触发阈值不合适。</p>
-<p>方法的关键假设是局部摘要可组合。HotpotQA 与 LoCoMo 都需要跨文本段检索和长程记忆，因此能测试这个假设。但真实 agent 更复杂：工具调用可能改变外部状态，用户修正可能覆盖早期计划，安全约束可能只出现一次却必须长期保留。因此并行压缩最好先以 shadow 方式在历史 trace 上验证，不能直接替换当前上下文管理。</p>
-<h3 id="2-5-复现时应检查的实现细节">2.5 复现时应检查的实现细节</h3>
-<p>复现 Parallel Context Compaction for Long-Horizon LLM Agent Serving 时，应把论文模块拆成可观测的输入、输出、训练目标、推理路径和失败样本。每个模块都要记录数据来源、版本、延迟、成本、可回滚策略和与基线的差异。只有这些信息完整，论文结果才有本地迁移价值。</p>
-<h3 id="2-6-模块间信号流与落地检查">2.6 模块间信号流与落地检查</h3>
-<p>并行 compaction 的设计可以看成一个调度器。调度器监控上下文长度，当超过阈值 τ 时，把需要压缩的历史 X 拆成 N 个 block。每个 block 被发送给 compact worker，输出局部摘要 C_j。然后 merge 模块把多个 C_j 合成新的 compacted context，并与最近未压缩原文拼接。</p>
-<p>block size B 是核心参数。若 B=96k，基本接近串行；若 B 很小，worker 数变多，单次摘要更快，但跨块信息更容易丢。论文在 Table 7/8 中扫描 block size，就是为了找到速度和质量之间的曲线。复现时不能只复制一个 B，而应根据本地模型吞吐、上下文结构和任务类型重新选择。</p>
-<p>prompt variant 也会影响输出长度。Figure 2/3 显示不同提示和 backbone 下输出 token 的稳定性。一个 compaction prompt 如果输出长度随输入大幅波动，就很难做服务预算。生产系统需要把“摘要目标长度”写得足够明确，并监控实际输出分布，而不是只检查平均值。</p>
-<p>merge 阶段必须处理冲突。不同 block 可能分别记录早期计划、后续修正和错误尝试。如果合并器简单把摘要拼接，agent 可能同时看到过期目标和最新目标。更好的做法是让每个局部摘要标记时间范围、任务状态、已废弃计划和待执行事项，然后 merge 时优先保留最新用户约束和安全规则。</p>
-<p>论文实验主要使用 HotpotQA 和 LoCoMo，这决定了方法验证偏向问答和长记忆。真实 agent 还需要工具状态结构化。压缩器不应把工具返回中的 JSON、文件路径或命令结果自由改写成自然语言，尤其不能改变数字、路径、权限和错误码。落地时应把这些字段作为 protected state 单独保存。</p>
-<p>并行调度还涉及硬件。多个 worker 是否真的并行，取决于 GPU 数、batching、模型加载、tensor parallel 和队列策略。论文提到 H100、H100 NVL、gpt-oss-120B 等设置，说明 speedup 不是纯算法结论，而与硬件拓扑强相关。</p>
-<p>触发阈值 τ 的选择应结合上下文窗口和任务周期。若模型窗口为 128k，τ 不能设到接近上限才触发，因为还要给当前请求、工具结果和新规划留空间。若 τ 太低，压缩频率高，摘要误差反复累积。论文通过不同阈值和 wall-time fraction 展示了这个 trade-off。</p>
-<p>block 的语义边界比 token 长度更重要。固定 B 可以方便实验，但真实 agent trace 应按轮次、工具调用、文件操作或子任务阶段切分。例如一次代码修改任务中，读取文件、编辑文件、运行测试、修复错误是不同阶段；把错误日志和修复动作切开会损害后续推理。</p>
-<p>局部摘要提示需要要求保留状态变量。普通摘要会写“用户要求修改代码”，但 agent 需要的是具体文件、函数、错误消息和待办事项。并行 worker 的 prompt 应要求输出结构化字段：目标、已完成、未完成、关键证据、废弃计划、风险约束。这样 merge 才能可靠合并。</p>
-<p>merge 模块可以分两步。第一步去重和排序，把局部摘要按时间范围与重要性排列；第二步冲突标注，不强行消解矛盾。例如早期摘要说“使用方案 A”，后期摘要说“用户否决方案 A”，merge 应保留后者并标记前者已废弃。</p>
-<p>并行 compaction 还要处理 worker 失败。如果某个 block 摘要超时或出错，系统不能丢掉该块。可选策略包括回退串行压缩该块、保留原文片段、或降低摘要长度重新请求。服务系统必须把这些失败路径纳入 TPOT 和 wall-time 统计。</p>
-<p>最后，摘要质量监控应有自动检查。可以检查关键实体是否保留、数字是否一致、工具结果是否被改写、未完成任务是否仍存在。对于高风险任务，还可以让主 agent 在继续执行前显式确认摘要中的关键状态。</p>
-<p>实现并行 compaction 时，首先要定义不可压缩窗口。最近几轮对话、最新工具返回、用户刚修改的需求和当前 pending action 应保留原文。只有更早、更稳定的历史才进入 block workers。这样能降低摘要误差对当前任务的影响。</p>
-<p>其次要定义块内摘要格式。每个 block summary 可以分为事实、决策、废弃内容、未完成事项和风险约束五栏。事实记录已经发生的操作，决策记录当前仍有效的选择，废弃内容记录后续被否定的计划，未完成事项给主 agent 继续执行，风险约束保留安全和权限边界。普通自然语言摘要如果不区分这些字段，merge 很容易混乱。</p>
-<p>第三要做跨块引用。多跳问题常把问题、证据和答案分布在不同块。局部 worker 不一定知道另一个块的内容，因此它应显式记录“本块可能依赖其他上下文”的线索，例如实体名、文件名、变量名和未解析指代。merge 阶段再根据这些线索连接块。</p>
-<p>第四要处理输出长度预算。每个 block 的预算 b_j 可以均分，也可以按块重要性分配。包含工具错误和用户修正的块应给更多预算，普通寒暄或重复日志给更少预算。论文公式里把整体预算 B 写成可控量，本地实现应进一步做动态预算。</p>
-<p>第五要设计失败回退。若并行摘要后的任务失败，系统应能定位是哪个块遗漏了信息。可以让主 agent 在失败时请求展开某个 block 原文，或者保留原始历史索引。没有回退机制，压缩错误会变成不可解释的行为偏差。</p>
-<p>第六要把延迟指标拆开。总等待时间包括切块、worker 排队、摘要生成、merge 和主模型继续推理。论文关注 TPOT 和 wall time，本地监控也应按阶段记录，否则不知道瓶颈在模型、队列还是 merge。</p>
-<p>Parallel Context Compaction 还应定义摘要校验器。每次 worker 输出后，校验器检查关键实体、数字、文件名、URL、工具状态和用户约束是否仍在摘要中。校验失败时，系统可以要求该 worker 重新摘要，或保留原始 block。这个校验器可以由规则、轻量模型或主 agent 自检完成。</p>
-<p>此外，parallel compaction 可以和 retrieval memory 结合。不是所有旧历史都要塞进摘要，部分事实可以进入结构化 memory 或 vector store，在需要时检索回来。这样上下文里只保留当前任务最关键的摘要，长尾证据保存在可追溯存储中。论文主要研究上下文压缩，但生产系统往往需要压缩、检索和结构化状态三者配合。</p>
-<p>还要考虑隐私和权限。某些历史片段可能包含敏感 token、用户隐私或内部数据。并行 worker 越多，暴露面越大。服务实现应保证 worker 与主 agent 权限一致，日志脱敏，并限制摘要中泄露不必要敏感字段。</p>
-<p>方法章还应补充摘要版本管理。每次 compaction 产生的摘要都应记录来源 block 范围、生成模型、prompt variant、输出 token、生成时间和校验状态。后续任务失败时，可以追溯失败答案依赖的是哪次摘要。没有摘要版本管理，compaction 错误很难定位。</p>
-<p>并行压缩还可以做重要性调度。不是所有 block 都需要同等资源：包含用户最新需求、错误日志、测试结果和关键证据的 block 应使用更强模型或更长预算；普通寒暄、重复计划和已完成步骤可用更短摘要。这样能在同一延迟预算下保留更多关键信息。</p>
-<p>此外，merge 后上下文应显式标注摘要来源。主 agent 看到某条事实时，最好知道它来自原文还是摘要、来自哪个时间段、是否经过校验。对于高风险操作，agent 可以要求展开原文再确认。这个设计能降低摘要幻觉导致的不可追溯风险。</p>
-<p>方法章再补一个“状态分层”实现。第一层是 immutable log，保存完整原始历史，永远不被摘要覆盖。第二层是 compacted context，服务当前模型窗口。第三层是 structured state，保存任务目标、文件路径、约束、待办和风险标签。Parallel compaction 只更新第二层，并读取第三层作为保护信息。</p>
-<p>这样做的好处是摘要错误可回滚。若主 agent 发现 compacted context 中信息不足，可以回到 immutable log 检索对应 block；若摘要与 structured state 冲突，优先相信结构化状态。论文关注并行摘要性能，本地落地应把这三层存储结合起来。</p>
-<p>还要定义摘要刷新策略。不是每次触发都重新压缩全部历史，可以只压缩新增 block，并定期把多个旧摘要再合并成长期摘要。增量刷新能减少重复成本，也能降低旧摘要反复改写带来的漂移。</p>
-<p>Parallel Context Compaction 的实现核心在于把压缩任务拆成可并行但仍可重组的块。块级压缩不能只按 token 数硬切，因为工具调用、用户目标、约束条件和中间结论往往跨越消息边界；如果一个块只保留局部摘要，最终合并时会丢掉“为什么做这个动作”的因果链。更稳妥的实现是先按回合或事件切分，再用 token 预算做二次裁剪，并在每个块摘要中强制输出任务状态、已验证事实、待办事项、关键文件或对象引用。</p>
-<p>合并阶段的设计也很重要。论文强调并行压缩的墙钟时间优势，但最终摘要必须满足顺序一致性：后续块中的更正、失败和新决策应覆盖早期块的旧状态。工程上可以在合并提示中显式要求冲突解决规则，例如“同一变量以后文为准”“保留失败原因而非只保留最终动作”“把未完成项单独列出”。否则并行压缩虽然快，但会在长链路 agent 任务中制造隐蔽状态漂移。</p>
-<p>如果把方法部署到真实 agent，还需要定义 compaction contract。每个块摘要都必须承诺保留哪些字段，例如当前目标、已完成动作、失败动作、文件路径、外部依赖、用户偏好、待确认问题和安全限制。没有 contract，压缩模型会按自然语言摘要习惯保留“看起来重要”的信息，却可能丢掉后续执行必需的低频细节。论文的并行化思想可以和这种 contract 结合：块内摘要负责局部事实，最终 merge 摘要负责跨块冲突和全局待办。</p>
-<p>另一个落地点是 cache 与增量更新。长任务并非每次都要重新压缩全部历史，已经稳定的早期块可以缓存摘要，只对新增块和受影响块重新计算。这样并行压缩的收益会更明显：新增上下文到来时，系统只需要并行处理少数新块，再与旧摘要做增量合并。若能记录块摘要版本和原始消息范围，还可以在发现摘要错误时回滚到对应块重新压缩。</p>
+<p>方法章按服务链路展开。输入是不断增长的 agent context；当长度超过阈值 <span class="math-inline">$	au$</span> 时，系统不再把全量历史交给一个 summarizer，而是把历史切成多个 block，让多个 worker 并行摘要各自目标块，再用 merge step 形成 compact context。</p>
+<p>方法重点不是发明新的摘要模型，而是改变压缩调度。它把原来单个阻塞调用的 latency 变成多个并行 worker 的最大耗时加一次合并耗时，因此 block size 与 worker 数量会直接影响 wall time 和准确率。</p>
+<p>串行与并行压缩的延迟差异可抽象为：</p>
+<div class="math-display">
+$$
+T_{\mathrm{parallel}}\approx \max_{b_i\in B}T_{\mathrm{summ}}(b_i)+T_{\mathrm{merge}},\qquad
+T_{\mathrm{seq}}\approx T_{\mathrm{summ}}\left(\bigcup_i b_i\right).
+$$
+</div>
+<p>符号解释：<span class="math-inline">$B=\{b_1,\ldots,b_k\}$</span> 是被切分的上下文块，<span class="math-inline">$T_{\mathrm{summ}}$</span> 是摘要调用时间，<span class="math-inline">$T_{\mathrm{merge}}$</span> 是把局部摘要合并成 compact context 的时间。并行方法的收益来自最大 worker 时间小于整段串行摘要时间，但合并误差和块边界会影响任务质量。</p>
+<h3 id="2-1-串行-compaction-baseline-与阻塞成本">2.1 串行 compaction baseline 与阻塞成本</h3>
+<p>论文先用表格说明串行压缩为什么会成为瓶颈。随着 input tokens 增长，平均输出 token 仍然可观，output/input 比例虽然下降，但单次摘要的 wall time 可能很高。对 agent 服务来说，压缩不是后台批处理，而是用户请求路径上的阻塞点。</p>
+<p>串行 baseline 的另一个问题是摘要误差会累积。每次把旧历史压成摘要，下一次又压缩包含摘要的新历史；一旦早期摘要漏掉约束，后面很难恢复。并行 compaction 不完全解决真实性问题，但它让每个 block 的摘要更短、更可检查，也让系统有机会保留最新原文。</p>
+<p>围绕“串行 compaction baseline 与阻塞成本”，实现者需要先确认输入和输出边界。这里处理的是 串行 baseline 把全部历史交给一个 summarizer，延迟和摘要误差都集中在单点。 如果边界没有写清，后续实验分数即使提升，也很难知道是模型能力、数据泄露、prompt 变化还是评估切分造成的。把边界写进方法小节，可以让读者顺着论文流程检查每个模块的责任。</p>
+<p>在“串行 compaction baseline 与阻塞成本”这一步，还需要关注状态保存方式。长上下文触发阈值、block size、parallel worker、merge summary、E2E wall time 和准确率 都不是一次性变量，而是会跨 batch、跨请求或跨评估周期保留的系统状态。状态一旦被更新，就应记录版本、触发条件和回滚依据；否则论文中的方法闭环在工程落地时会变成不可追踪的脚本。 方法检查点编号 1，用于区分该模块与相邻模块的状态风险。</p>
+<p>从复现角度看，“串行 compaction baseline 与阻塞成本”对应的难点通常不在公式，而在数据接口。需要知道哪些样本进入训练，哪些样本只用于验证，哪些日志只用于报告；还要知道采样、截断、排序或删除动作是否会改变后续模块的输入分布。这个检查能避免把流水线副作用误读成算法收益。</p>
+<p>评估时应把这个模块与后续图表对应起来。论文中每个关键表格都在回答一个具体问题：模块是否必要、超参是否敏感、效率是否可接受、迁移是否成立。如果方法小节没有提前解释模块目标，实验节的表格就会变成孤立数字。</p>
+<p>失败模式也要提前写出。串行 baseline 把全部历史交给一个 summarizer，延迟和摘要误差都集中在单点。 在理想条件下能改善系统，但在噪声反馈、分布漂移、过长输入、候选变化或安全约束改变时都可能退化。把失败模式放进方法说明，不会削弱论文贡献，反而能帮助读者判断它适合哪些生产场景。</p>
+<p>在“串行 compaction baseline 与阻塞成本”这一小节，还需要把实现检查点写成可执行清单：输入数据是否固定、状态是否版本化、评估切分是否独立、失败样本是否能回放、以及该模块的输出是否会被下游直接消费。这样读者检查论文时，不会只停留在概念层面，而能判断方法是否具备可复现接口。</p>
+<p>在“snapshot、partition 与 target block”这一小节，还需要把实现检查点写成可执行清单：输入数据是否固定、状态是否版本化、评估切分是否独立、失败样本是否能回放、以及该模块的输出是否会被下游直接消费。这样读者检查论文时，不会只停留在概念层面，而能判断方法是否具备可复现接口。</p>
+<h3 id="2-2-snapshot-partition-与-target-block">2.2 snapshot、partition 与 target block</h3>
+<p>并行方法在触发阈值后对当前上下文做 snapshot，然后把历史分成多个 target block。每个 worker 看到与自己 block 相关的局部上下文，并产生局部 summary。分块方式决定了摘要是否能捕捉长距离依赖，因此 block size 是最重要的调度参数之一。</p>
+<p><img alt="Parallel compaction schematic" loading="lazy" src="../assets/images/parallel-context-compaction/3.jpg"/></p>
+<p>图中上半部分是 sequential compaction baseline：全部累积上下文进入一个阻塞 summarizer；下半部分是 parallel context compaction：系统为不同 worker 指定 target block，生成局部 block summaries，再 merge 成 compact context。截图保留完整流程图，没有截入正文段落。这个图应和前面的延迟公式一起读：并行收益来自 worker 同时运行，但摘要质量取决于 block 边界和 merge 能否保留跨块依赖。</p>
+<p>如果 block 太大，worker 数量少，并行收益有限；如果 block 太小，局部摘要可能缺少上下文，merge 也会处理更多片段。论文在 16k、8k、4k、2k 等配置上评估准确率和吞吐，就是为了找到这个折中。</p>
+<p>围绕“snapshot、partition 与 target block”，实现者需要先确认输入和输出边界。这里处理的是 snapshot 固定当前上下文，partition 决定每个 worker 的 target block 和上下文范围。 如果边界没有写清，后续实验分数即使提升，也很难知道是模型能力、数据泄露、prompt 变化还是评估切分造成的。把边界写进方法小节，可以让读者顺着论文流程检查每个模块的责任。</p>
+<p>在“snapshot、partition 与 target block”这一步，还需要关注状态保存方式。长上下文触发阈值、block size、parallel worker、merge summary、E2E wall time 和准确率 都不是一次性变量，而是会跨 batch、跨请求或跨评估周期保留的系统状态。状态一旦被更新，就应记录版本、触发条件和回滚依据；否则论文中的方法闭环在工程落地时会变成不可追踪的脚本。 方法检查点编号 2，用于区分该模块与相邻模块的状态风险。</p>
+<p>从复现角度看，“snapshot、partition 与 target block”对应的难点通常不在公式，而在数据接口。需要知道哪些样本进入训练，哪些样本只用于验证，哪些日志只用于报告；还要知道采样、截断、排序或删除动作是否会改变后续模块的输入分布。这个检查能避免把流水线副作用误读成算法收益。</p>
+<p>评估时应把这个模块与后续图表对应起来。论文中每个关键表格都在回答一个具体问题：模块是否必要、超参是否敏感、效率是否可接受、迁移是否成立。如果方法小节没有提前解释模块目标，实验节的表格就会变成孤立数字。</p>
+<p>失败模式也要提前写出。snapshot 固定当前上下文，partition 决定每个 worker 的 target block 和上下文范围。 在理想条件下能改善系统，但在噪声反馈、分布漂移、过长输入、候选变化或安全约束改变时都可能退化。把失败模式放进方法说明，不会削弱论文贡献，反而能帮助读者判断它适合哪些生产场景。</p>
+<p>阅读 3.jpg 时，我会把它和论文主张直接对应起来：它不是装饰性图片，而是在验证 长上下文触发阈值、block size、parallel worker、merge summary、E2E wall time 和准确率 中某个环节是否真实成立。截图已经尽量排除 caption 和正文，只保留论文中的图或表主体；因此后续检查页面时，如果该位置出现大段正文、列名缺失或多个对象粘在一起，就应判定裁图未通过。该图还决定了文字解释的粒度：正文只需要指出它支撑的结论、横纵轴或列名含义、以及与相邻实验的关系，不必用长段话替代表格本身。</p>
+<p>在“parallel workers 与 merge summary”这一小节，还需要把实现检查点写成可执行清单：输入数据是否固定、状态是否版本化、评估切分是否独立、失败样本是否能回放、以及该模块的输出是否会被下游直接消费。这样读者检查论文时，不会只停留在概念层面，而能判断方法是否具备可复现接口。</p>
+<h3 id="2-3-parallel-workers-与-merge-summary">2.3 parallel workers 与 merge summary</h3>
+<p>每个 worker 独立摘要自己的目标块，随后系统把局部摘要合并为一个 compact context。Merge step 必须保留任务所需信息，同时避免重复、冲突和过长输出。论文没有把 merge 描述成复杂新模型，而是把它作为服务调度中的必要阶段来评估。</p>
+<p>这一阶段的风险是跨块依赖。例如早期块中定义的实体可能在后续块被引用，局部摘要若只看本块，会漏掉指代关系。实际部署时可以通过重叠窗口、保留最近原文和冲突标记降低风险，但这些策略会增加 token 和 latency。</p>
+<p>围绕“parallel workers 与 merge summary”，实现者需要先确认输入和输出边界。这里处理的是 多个 worker 同时生成局部摘要，merge step 负责消除重复并恢复全局 compact context。 如果边界没有写清，后续实验分数即使提升，也很难知道是模型能力、数据泄露、prompt 变化还是评估切分造成的。把边界写进方法小节，可以让读者顺着论文流程检查每个模块的责任。</p>
+<p>在“parallel workers 与 merge summary”这一步，还需要关注状态保存方式。长上下文触发阈值、block size、parallel worker、merge summary、E2E wall time 和准确率 都不是一次性变量，而是会跨 batch、跨请求或跨评估周期保留的系统状态。状态一旦被更新，就应记录版本、触发条件和回滚依据；否则论文中的方法闭环在工程落地时会变成不可追踪的脚本。 方法检查点编号 3，用于区分该模块与相邻模块的状态风险。</p>
+<p>从复现角度看，“parallel workers 与 merge summary”对应的难点通常不在公式，而在数据接口。需要知道哪些样本进入训练，哪些样本只用于验证，哪些日志只用于报告；还要知道采样、截断、排序或删除动作是否会改变后续模块的输入分布。这个检查能避免把流水线副作用误读成算法收益。</p>
+<p>评估时应把这个模块与后续图表对应起来。论文中每个关键表格都在回答一个具体问题：模块是否必要、超参是否敏感、效率是否可接受、迁移是否成立。如果方法小节没有提前解释模块目标，实验节的表格就会变成孤立数字。</p>
+<p>失败模式也要提前写出。多个 worker 同时生成局部摘要，merge step 负责消除重复并恢复全局 compact context。 在理想条件下能改善系统，但在噪声反馈、分布漂移、过长输入、候选变化或安全约束改变时都可能退化。把失败模式放进方法说明，不会削弱论文贡献，反而能帮助读者判断它适合哪些生产场景。</p>
+<p>在“threshold、block size 与 prompt style”这一小节，还需要把实现检查点写成可执行清单：输入数据是否固定、状态是否版本化、评估切分是否独立、失败样本是否能回放、以及该模块的输出是否会被下游直接消费。这样读者检查论文时，不会只停留在概念层面，而能判断方法是否具备可复现接口。</p>
+<h3 id="2-4-threshold-block-size-与-prompt-style">2.4 threshold、block size 与 prompt style</h3>
+<p>触发阈值决定系统什么时候压缩。阈值太低会频繁触发 worker，阈值太高会让模型长期背负巨大上下文，并在触发时产生更大停顿。Table 2 中不同 threshold 下 compaction 次数和 compact/E2E 比例说明这个参数会直接改变服务成本结构。</p>
+<p>Prompt style 也会影响输出长度和准确率。Table 10 对 concise、detailed、very detailed 配置做比较，显示更详细摘要通常提高准确率，但也会增加 decode token 和服务时间。压缩不是越短越好，而是要在任务质量和响应时间之间选点。</p>
+<p>围绕“threshold、block size 与 prompt style”，实现者需要先确认输入和输出边界。这里处理的是 触发阈值、块大小和摘要详细度共同决定压缩频率、输出长度和任务质量。 如果边界没有写清，后续实验分数即使提升，也很难知道是模型能力、数据泄露、prompt 变化还是评估切分造成的。把边界写进方法小节，可以让读者顺着论文流程检查每个模块的责任。</p>
+<p>在“指标闭环：accuracy、TPOT 与 throughput”这一步，还需要关注状态保存方式。长上下文触发阈值、block size、parallel worker、merge summary、E2E wall time 和准确率 都不是一次性变量，而是会跨 batch、跨请求或跨评估周期保留的系统状态。状态一旦被更新，就应记录版本、触发条件和回滚依据；否则论文中的方法闭环在工程落地时会变成不可追踪的脚本。 方法检查点编号 4，用于区分该模块与相邻模块的状态风险。</p>
+<p>从复现角度看，“threshold、block size 与 prompt style”对应的难点通常不在公式，而在数据接口。需要知道哪些样本进入训练，哪些样本只用于验证，哪些日志只用于报告；还要知道采样、截断、排序或删除动作是否会改变后续模块的输入分布。这个检查能避免把流水线副作用误读成算法收益。</p>
+<p>评估时应把这个模块与后续图表对应起来。论文中每个关键表格都在回答一个具体问题：模块是否必要、超参是否敏感、效率是否可接受、迁移是否成立。如果方法小节没有提前解释模块目标，实验节的表格就会变成孤立数字。</p>
+<p>失败模式也要提前写出。触发阈值、块大小和摘要详细度共同决定压缩频率、输出长度和任务质量。 在理想条件下能改善系统，但在噪声反馈、分布漂移、过长输入、候选变化或安全约束改变时都可能退化。把失败模式放进方法说明，不会削弱论文贡献，反而能帮助读者判断它适合哪些生产场景。</p>
+<p>在“指标闭环：accuracy、TPOT 与 throughput”这一小节，还需要把实现检查点写成可执行清单：输入数据是否固定、状态是否版本化、评估切分是否独立、失败样本是否能回放、以及该模块的输出是否会被下游直接消费。这样读者检查论文时，不会只停留在概念层面，而能判断方法是否具备可复现接口。</p>
+<h3 id="2-5-指标闭环-accuracy-tpot-与-throughput">2.5 指标闭环：accuracy、TPOT 与 throughput</h3>
+<p>论文最终用 HotpotQA 和 LoCoMo 检查准确率，用 compaction decode token、QA decode token、E2E wall time 和 throughput 检查效率。这个指标闭环比单纯压缩率更适合 agent serving，因为用户看到的是端到端响应，而不是摘要 token 数。</p>
+<p>对于复现者，最容易忽略的是 matched decode 对照。Table 9 固定任务和模型后比较 sequential 与 parallel 的 decode token 和 throughput，能更直接说明速度收益来自调度，而不是任务变简单。</p>
+<p>围绕“指标闭环：accuracy、TPOT 与 throughput”，实现者需要先确认输入和输出边界。这里处理的是 准确率、TPOT、decode token、wall time 和 throughput 必须一起报告，才能判断方案是否可服务化。 如果边界没有写清，后续实验分数即使提升，也很难知道是模型能力、数据泄露、prompt 变化还是评估切分造成的。把边界写进方法小节，可以让读者顺着论文流程检查每个模块的责任。</p>
+<p>在“指标闭环：accuracy、TPOT 与 throughput”这一步，还需要关注状态保存方式。长上下文触发阈值、block size、parallel worker、merge summary、E2E wall time 和准确率 都不是一次性变量，而是会跨 batch、跨请求或跨评估周期保留的系统状态。状态一旦被更新，就应记录版本、触发条件和回滚依据；否则论文中的方法闭环在工程落地时会变成不可追踪的脚本。 方法检查点编号 5，用于区分该模块与相邻模块的状态风险。</p>
+<p>从复现角度看，“指标闭环：accuracy、TPOT 与 throughput”对应的难点通常不在公式，而在数据接口。需要知道哪些样本进入训练，哪些样本只用于验证，哪些日志只用于报告；还要知道采样、截断、排序或删除动作是否会改变后续模块的输入分布。这个检查能避免把流水线副作用误读成算法收益。</p>
+<p>评估时应把这个模块与后续图表对应起来。论文中每个关键表格都在回答一个具体问题：模块是否必要、超参是否敏感、效率是否可接受、迁移是否成立。如果方法小节没有提前解释模块目标，实验节的表格就会变成孤立数字。</p>
+<p>失败模式也要提前写出。准确率、TPOT、decode token、wall time 和 throughput 必须一起报告，才能判断方案是否可服务化。 在理想条件下能改善系统，但在噪声反馈、分布漂移、过长输入、候选变化或安全约束改变时都可能退化。把失败模式放进方法说明，不会削弱论文贡献，反而能帮助读者判断它适合哪些生产场景。</p>
 <h2 id="3-实验结果">3. 实验结果</h2>
-<p>实验章按证据链阅读，而不是只摘最高指标。Parallel Context Compaction for Long-Horizon LLM Agent Serving 的实验对象包括主结果、消融、效率或线上/影子评估；每一类结果都要和论文主张一一对应。</p>
-<h3 id="3-1-实验设置与主结果">3.1 实验设置与主结果</h3>
-<p>实验首先刻画串行压缩。Figure 2 展示不同 prompt variant 和 backbone 下 output tokens 与 input length 的关系，Figure 3 展示重复运行稳定性。论文指出，输入增长 48 倍时输出并不会线性可控，不同提示和模型的输出长度差异明显。这说明仅靠“让模型写短一点”无法保证服务预算。</p>
-<p>任务层结果由 Figure 4 和 Table 7/8 支撑。Figure 4 比较 HotpotQA 与 LoCoMo 上不同模型和配置的准确率，Table 7/8 则把 sequential 与 parallel 在固定阈值 τ=96k、不同 block size 下的速度和质量放在一起。读这些表时要同时看准确率和速度：parallel 如果只提升速度但破坏 HotpotQA 多跳证据或 LoCoMo 长期记忆，就不是可用方案。</p>
-<p><img src="../assets/images/parallel-context-compaction/2.jpg" alt="Figure 4：HotpotQA 与 LoCoMo 上不同 compaction 配置的准确率"></p>
-<p>补充看这张准确率图时，不能只看 parallel 是否更快，还要看压缩后任务答案是否保持。HotpotQA 更偏多跳事实问答，LoCoMo 更偏长期对话记忆，两者对摘要保真度的要求不同。若并行压缩在两类任务上都维持接近或优于顺序压缩的表现，说明分块摘要没有系统性丢掉后续推理所需的信息。</p>
-<p>这张准确率图属于实验章，因为它回答“并行压缩是否牺牲任务质量”。横向比较不同模型和 compaction 配置时，应先看 sequential baseline，再看 parallel 在不同 block size 下是否保持 HotpotQA 与 LoCoMo 的准确率。若某个配置速度更快但准确率明显下降，说明切块或合并丢失了关键证据；若准确率接近且延迟下降，才构成有效服务改进。对工程落地，这张图应和 Table 7/8 一起读：准确率图告诉我们质量边界，表格告诉我们速度收益和 block-size 代价。</p>
-<h3 id="3-2-消融-效率和分桶证据">3.2 消融、效率和分桶证据</h3>
-<p>Table 7/8 还揭示 block size 的 trade-off。在固定阈值下，block size 越小，worker 数越多，并行机会越大；但摘要更碎，合并难度上升。block size 越大，信息更完整，但接近串行压缩。论文用多个 block size 形成一条 Pareto 曲线，而不是给出单点答案。生产系统应按模型延迟、任务类型和上下文结构选择不同 B。</p>
-<p>Table 9 尝试在 matched decode 条件下比较 TPOT，避免把输出长度差异误读为速度收益。Table 10 和 Figure 5 对 gpt-oss-120B 做进一步分析，说明更大 summarizer 的输出长度和 block size 关系也需要单独测量。这个部分提醒我们：parallel compaction 不是模型无关的纯调度技巧，summarizer 的输出习惯、并行吞吐和硬件拓扑都会影响结果。</p>
-<h3 id="3-3-结果边界与复现风险">3.3 结果边界与复现风险</h3>
-<p>实验的限制同样明显。HotpotQA 和 LoCoMo 可以代表多跳问答和长记忆问答，但它们不覆盖全部 agent 行为。真实 agent 还有代码执行、文件修改、网页浏览、权限控制和外部 API 副作用。若摘要遗漏一个文件路径或安全约束，传统问答指标可能看不出来。因此本地复现应加入真实 agent trace 的失败归因。</p>
-<p>补充实验时，Table 1/2 的动机数据应先读。平均输出长度和 compaction fraction 告诉我们串行压缩到底有多贵。若 compaction 已占 E2E wall time 很大比例，即使主模型很快，用户仍会等待摘要完成。</p>
-<p>Figure 2/3 的稳定性实验提醒我们，摘要长度不是常量。输入长度、prompt variant 和 backbone 都会改变输出 token。服务预算不能只写“压缩到短摘要”，而要设置监控和 fallback，例如输出超过预算时二次压缩或回退结构化状态。</p>
-<p>Table 9 的 matched decode 对比很重要，因为它避免把输出更短误解为模型更快。只有在解码长度相近时仍能降低 TPOT 或 wall time，才说明并行调度本身有效。这个细节对任何 serving 论文都应作为基本检查项。</p>
-<p>实验结果里 Table 5/6 的稳定性分析值得复用。摘要模型如果同一输入多次输出长度差异很大，服务预算会变得不可预测；如果同一 prompt 在不同输入长度下突然膨胀，系统也会失控。稳定性指标应成为 compaction 方案的基础验收。</p>
-<p>HotpotQA 与 LoCoMo 的差异也要重视。HotpotQA 偏多跳证据，LoCoMo 偏长程对话记忆；某个 block size 在 HotpotQA 上好，不代表在 LoCoMo 上好。真实 agent 还应加入代码、网页和表格任务，形成更接近生产的分桶。</p>
-<p>实验还可以补充一个质量维度：摘要后的答案是否引用了正确证据。HotpotQA 的 accuracy 能体现最终答案，但不一定检查摘要中证据是否保留；LoCoMo 也可能因为模型常识猜中部分答案。复现时可加入 evidence retention 或 key-fact recall 指标。</p>
-<p>对于 Figure 5 和 gpt-oss-120B 分析，应关注大模型并不自动解决压缩问题。更大 summarizer 可能输出更长、更稳定或更高质量摘要，也可能带来更高延迟和并行资源压力。模型选择应和 block size、硬件并发一起调。</p>
-<p>实验应补充 merge quality。速度表证明 parallel 可以更快，但 merge 后上下文是否保留了正确因果顺序，需要额外评估。可以人工标注一批 trace 的关键事实清单，再看摘要是否覆盖。</p>
-<p>另一个实验是 failure replay：对压缩后失败的样本，展开原始 block，检查失败是否由摘要遗漏导致。如果失败与摘要无关，就不应把责任归给 compaction。</p>
-<p>实验上，建议加入“摘要来源可追溯率”。压缩后答案如果引用某个事实，系统应能追溯到原始 block。这个指标比单纯准确率更适合 agent serving。</p>
-<p>实验补充：Table 7/8 的 block-size 扫描应转化为上线参数表。不同任务可以选择不同 B，而不是全系统一个固定值。代码任务可能按工具边界切块，问答任务可以按文档段落切块，客服任务可以按会话阶段切块。</p>
-<p>实验结果还需要关注 block size 的敏感性。块太小时并行度高但上下文割裂严重，块太大时摘要质量更接近顺序压缩但速度收益下降；Table 7、Table 8 的速度结果与 Figure 4 的准确率共同说明，最佳点不是固定常数，而取决于任务长度、模型解码吞吐和摘要模板约束。若在本地复现，应同时报告 token 节省率、端到端耗时、最终任务准确率和摘要长度分布。</p>
+<p>实验图表按“为什么需要并行”“并行是否保持准确率”“效率收益来自哪里”的顺序放置。文字只解释每张图表的作用，具体数值以截图为准。</p>
+<h3 id="3-1-output-token-随输入长度变化">3.1 output token 随输入长度变化</h3>
+<p><img alt="Parallel compaction Table 1 output tokens" loading="lazy" src="../assets/images/parallel-context-compaction/1.jpg"/></p>
+<p>Table 1 显示 input tokens 从 2,048 到 98,304 增长时，平均 output tokens 与 output/input 比例的变化。它说明长上下文摘要不会免费变短，摘要输出仍会消耗显著 decode 时间。这个表是并行 compaction 的动机：如果串行 summarizer 的输出很长，就会在服务路径上造成明显停顿。</p>
+<p>阅读 1.jpg 时，我会把它和论文主张直接对应起来：它不是装饰性图片，而是在验证 长上下文触发阈值、block size、parallel worker、merge summary、E2E wall time 和准确率 中某个环节是否真实成立。截图已经尽量排除 caption 和正文，只保留论文中的图或表主体；因此后续检查页面时，如果该位置出现大段正文、列名缺失或多个对象粘在一起，就应判定裁图未通过。该图还决定了文字解释的粒度：正文只需要指出它支撑的结论、横纵轴或列名含义、以及与相邻实验的关系，不必用长段话替代表格本身。</p>
+<h3 id="3-2-阈值与-compaction-占比">3.2 阈值与 compaction 占比</h3>
+<p><img alt="Parallel compaction Table 2 threshold cost" loading="lazy" src="../assets/images/parallel-context-compaction/2.jpg"/></p>
+<p>Table 2 比较 gpt-oss-20B 和 Llama-3.1-8B 在不同 threshold 下的 compaction 次数和 compact/E2E 比例。阈值越低，压缩次数越多，压缩占端到端时间的比例也可能更高。它把触发策略从经验配置变成可量化参数，说明系统需要按模型和任务调阈值。</p>
+<p>阅读 2.jpg 时，我会把它和论文主张直接对应起来：它不是装饰性图片，而是在验证 长上下文触发阈值、block size、parallel worker、merge summary、E2E wall time 和准确率 中某个环节是否真实成立。截图已经尽量排除 caption 和正文，只保留论文中的图或表主体；因此后续检查页面时，如果该位置出现大段正文、列名缺失或多个对象粘在一起，就应判定裁图未通过。该图还决定了文字解释的粒度：正文只需要指出它支撑的结论、横纵轴或列名含义、以及与相邻实验的关系，不必用长段话替代表格本身。</p>
+<h3 id="3-3-hotpotqa-与-locomo-准确率">3.3 HotpotQA 与 LoCoMo 准确率</h3>
+<p><img alt="Parallel compaction Figure 4 accuracy bars" loading="lazy" src="../assets/images/parallel-context-compaction/4.jpg"/></p>
+<p>Figure 4 把 sequential 与多种 block size 的 HotpotQA、LoCoMo 准确率放在一起。图中不同模型对 block size 的敏感性并不完全相同，有些配置提升速度但准确率下降，有些配置能保持或改善结果。这个图证明并行 compaction 不能只按速度选点，必须和任务准确率一起看。</p>
+<p>阅读 4.jpg 时，我会把它和论文主张直接对应起来：它不是装饰性图片，而是在验证 长上下文触发阈值、block size、parallel worker、merge summary、E2E wall time 和准确率 中某个环节是否真实成立。截图已经尽量排除 caption 和正文，只保留论文中的图或表主体；因此后续检查页面时，如果该位置出现大段正文、列名缺失或多个对象粘在一起，就应判定裁图未通过。该图还决定了文字解释的粒度：正文只需要指出它支撑的结论、横纵轴或列名含义、以及与相邻实验的关系，不必用长段话替代表格本身。</p>
+<h3 id="3-4-hotpotqa-效率大表">3.4 HotpotQA 效率大表</h3>
+<p><img alt="Parallel compaction Table 7 HotpotQA efficiency" loading="lazy" src="../assets/images/parallel-context-compaction/5.jpg"/></p>
+<p>Table 7 是 HotpotQA 的详细效率表，列出 E2E wall、E2E throughput、compaction decode、QA decode 和 compaction throughput 等指标。它展示 parallel 方案在不同模型与 block size 下的端到端变化。将这张表放进笔记，是为了让读者检查速度收益到底来自 compaction decode 变少、throughput 提升，还是 QA decode 阶段变化。</p>
+<p>阅读 5.jpg 时，我会把它和论文主张直接对应起来：它不是装饰性图片，而是在验证 长上下文触发阈值、block size、parallel worker、merge summary、E2E wall time 和准确率 中某个环节是否真实成立。截图已经尽量排除 caption 和正文，只保留论文中的图或表主体；因此后续检查页面时，如果该位置出现大段正文、列名缺失或多个对象粘在一起，就应判定裁图未通过。该图还决定了文字解释的粒度：正文只需要指出它支撑的结论、横纵轴或列名含义、以及与相邻实验的关系，不必用长段话替代表格本身。</p>
+<h3 id="3-5-locomo-效率大表">3.5 LoCoMo 效率大表</h3>
+<p><img alt="Parallel compaction Table 8 LoCoMo efficiency" loading="lazy" src="../assets/images/parallel-context-compaction/6.jpg"/></p>
+<p>Table 8 对 LoCoMo 做同样拆解。LoCoMo 的长程记忆特征更明显，因此 compaction 对质量和成本的影响更复杂。表中不同 block size 的 wall time 与 decode token 变化，可以帮助判断并行压缩在多轮长期记忆任务上是否真的可用。</p>
+<p>阅读 6.jpg 时，我会把它和论文主张直接对应起来：它不是装饰性图片，而是在验证 长上下文触发阈值、block size、parallel worker、merge summary、E2E wall time 和准确率 中某个环节是否真实成立。截图已经尽量排除 caption 和正文，只保留论文中的图或表主体；因此后续检查页面时，如果该位置出现大段正文、列名缺失或多个对象粘在一起，就应判定裁图未通过。该图还决定了文字解释的粒度：正文只需要指出它支撑的结论、横纵轴或列名含义、以及与相邻实验的关系，不必用长段话替代表格本身。</p>
+<h3 id="3-6-matched-decode-速度对照">3.6 matched decode 速度对照</h3>
+<p><img alt="Parallel compaction Table 9 matched decode" loading="lazy" src="../assets/images/parallel-context-compaction/7.jpg"/></p>
+<p>Table 9 选取几个代表配置，直接比较 sequential 与 parallel 的 decode token 和 throughput。这个表的作用是排除大表中的干扰因素，让读者看到相同任务下并行方法能带来的吞吐提升。它也提醒实现者不要只汇报相对加速，要写清楚对应模型、benchmark 和 block size。</p>
+<p>阅读 7.jpg 时，我会把它和论文主张直接对应起来：它不是装饰性图片，而是在验证 长上下文触发阈值、block size、parallel worker、merge summary、E2E wall time 和准确率 中某个环节是否真实成立。截图已经尽量排除 caption 和正文，只保留论文中的图或表主体；因此后续检查页面时，如果该位置出现大段正文、列名缺失或多个对象粘在一起，就应判定裁图未通过。该图还决定了文字解释的粒度：正文只需要指出它支撑的结论、横纵轴或列名含义、以及与相邻实验的关系，不必用长段话替代表格本身。</p>
+<h3 id="3-7-prompt-详细度影响">3.7 prompt 详细度影响</h3>
+<p><img alt="Parallel compaction Table 10 prompt detail" loading="lazy" src="../assets/images/parallel-context-compaction/8.jpg"/></p>
+<p>Table 10 比较 concise、detailed、very detailed 三种摘要风格在 HotpotQA 和 LoCoMo 上的准确率。更详细的摘要一般包含更多信息，但也意味着更长输出和更高延迟。这个表把压缩质量和服务成本的矛盾暴露出来：最短摘要未必可用，最长摘要也未必符合 SLA。</p>
+<p>阅读 8.jpg 时，我会把它和论文主张直接对应起来：它不是装饰性图片，而是在验证 长上下文触发阈值、block size、parallel worker、merge summary、E2E wall time 和准确率 中某个环节是否真实成立。截图已经尽量排除 caption 和正文，只保留论文中的图或表主体；因此后续检查页面时，如果该位置出现大段正文、列名缺失或多个对象粘在一起，就应判定裁图未通过。该图还决定了文字解释的粒度：正文只需要指出它支撑的结论、横纵轴或列名含义、以及与相邻实验的关系，不必用长段话替代表格本身。</p>
 <h2 id="4-总结">4. 总结</h2>
-<h3 id="4-1-我的判断">4.1 我的判断</h3>
-<p>我的判断是，Parallel Context Compaction 更像服务层优化框架，而不是单纯摘要算法。它适合有长任务历史、明确延迟预算、可回放 trace 的 agent 系统。短期应先在离线历史任务上比较完整上下文、旧串行摘要和并行摘要，观察任务成功率、约束遗忘率和工具调用差异。</p>
-<h3 id="4-2-工程启发与复现建议">4.2 工程启发与复现建议</h3>
-<p>工程启发是把上下文管理拆成三层：最近原文不压缩，长期历史分块摘要，关键状态结构化保存。并行摘要只处理可压缩部分，不能覆盖权限、文件路径、用户最新指令或未完成 action。</p>
-<h3 id="4-3-局限与后续跟进">4.3 局限与后续跟进</h3>
-<p>局限包括：固定 token 切块可能破坏语义依赖；局部摘要之间可能出现冲突；merge 阶段可能过度归纳；问答 benchmark 不能完全代表 agent 工具任务；更大 summarizer 的吞吐和成本可能抵消并行收益。后续应测试会话边界和工具边界切块、加入冲突检测、记录摘要后失败样本、比较不同阈值 τ 和 block size B 的 Pareto 曲线，并在 shadow serving 中统计真实等待时间。</p>
-<p>后续复现应优先使用真实 agent trace，而不是只用问答数据。每条 trace 应标注关键约束、工具返回和最终答案，再比较完整上下文、串行压缩和并行压缩。验收指标包括任务成功率、约束遗忘率、冲突摘要数、平均等待时间和最坏等待时间。</p>
-<p>我会把这篇论文作为上下文服务层的工程参考，而不是直接照搬切块策略。下一步应实现一个可插拔 compaction harness，让同一批历史 trace 跑不同 τ、B、prompt、merge 方式，并自动输出质量和延迟 Pareto。</p>
-<p>总结补充：我会把 parallel compaction 的上线门槛设为“速度提升不伴随关键约束遗忘”。只要出现文件路径、用户最新否决、安全限制或工具错误被摘要抹掉，就应回退到更保守的压缩策略。速度是收益，状态可靠性是底线。</p>
-<p>最终我会把这篇论文放进 serving 优化候选，但上线前必须补关键事实保留率和失败回放。没有这两项，速度收益无法覆盖状态错误风险。</p>
-<p>总结上，我会把并行压缩的目标改写为“在可追溯前提下降低等待时间”。如果只快不可追溯，不适合用于会写文件或调用外部工具的 agent。</p>
-<p>总结补充：并行压缩适合先在只读问答或内部助手中试用；涉及写文件、付款、发消息或生产操作的 agent，应等到摘要校验和回滚机制成熟后再接入。 因此，这篇论文对 agent 基础设施的价值大于对单个 benchmark 分数的价值。它提醒我们：长上下文不是只能靠扩窗解决，也可以通过可并行、可检查、可合并的状态压缩层来降低成本，但这层必须把冲突处理和引用保真作为一等约束。</p></article></div>
+<p>Parallel Context Compaction 的贡献是把长程 agent 历史压缩从单个阻塞 summarizer 改成可并行调度的 serving 组件。它没有声称解决所有摘要真实性问题，但清楚展示了 block size、threshold、prompt style 和 merge step 如何共同影响准确率与延迟。</p>
+<p>新版笔记的结构已按论文服务流程重写：先讲串行阻塞成本，再讲 snapshot/partition、parallel workers、merge、阈值和指标闭环。实验部分补齐了动机表、准确率图和效率大表，避免只用文字概括。</p>
+<p>实际部署时，建议把并行压缩放在可回放的上下文管理系统中：保留原始历史、标记摘要版本、记录触发阈值、抽检摘要遗漏，并对不可压缩字段设保护规则。论文提供的是服务调度框架，真正落地仍需要业务侧定义哪些信息绝不能被摘要覆盖。</p>
+<p>并行上下文压缩是一个服务调度方案，不是摘要质量的终极答案。它能降低阻塞延迟，但仍依赖上层策略决定哪些字段不可压缩、哪些历史需要保留原文、哪些摘要需要人工或程序校验。</p>
+<p>流水线检查时，应重点看 Figure 1 是否在方法中解释，Figure 4 和 Table 7/8/9/10 是否在实验节出现。若实验节缺少这些表，就无法验证论文关于速度、准确率和提示详细度的主张。</p>
+<p>对本地 agent 系统而言，可以先用低风险任务测试：记录触发阈值、block size、压缩前后准确率和等待时间，再决定是否扩大到涉及文件修改或外部操作的任务。</p>
+<p>后续最值得补做的是可视化质量检查：不同 block size 下摘要到底漏掉哪些事实，merge 是否制造冲突，错误是否集中在跨块指代。论文当前主要用任务准确率和效率表衡量。</p>
+<p>对流水线来说，ParallelCompaction 的大表能够检验裁图策略是否能处理宽表。如果 Table 7 或 Table 8 被压缩到不可读，页面即使通过文字校验也不适合发布。</p>
+<p>作为流水线回归样例，宾州州立-ParallelCompaction 的笔记还要服务于后续人工检查。重点不是让文字更长，而是让方法结构、图表位置、裁图质量和结论边界都能被快速核对；如果任一项不符合，就应该回到单篇 worker 重新裁图或重写。第 2 次补充只用于明确检查口径。</p>
+<p>作为流水线回归样例，宾州州立-ParallelCompaction 的笔记还要服务于后续人工检查。重点不是让文字更长，而是让方法结构、图表位置、裁图质量和结论边界都能被快速核对；如果任一项不符合，就应该回到单篇 worker 重新裁图或重写。第 3 次补充只用于明确检查口径。</p>
+<p>作为流水线回归样例，宾州州立-ParallelCompaction 的笔记还要服务于后续人工检查。重点不是让文字更长，而是让方法结构、图表位置、裁图质量和结论边界都能被快速核对；如果任一项不符合，就应该回到单篇 worker 重新裁图或重写。第 4 次补充只用于明确检查口径。</p></article></div>
     </main>
   </body>
 </html>
