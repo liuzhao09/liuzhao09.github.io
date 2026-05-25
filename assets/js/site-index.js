@@ -13,7 +13,7 @@
     "./papers/vpo.html": "2026-05-23",
     "./papers/gated-deltanet-2.html": "2026-05-23",
     "./papers/moss-self-evolution.html": "2026-05-23",
-    "./papers/bgcc-multimodal-recommendation.html": "2026-05-22",
+    "./papers/bgcc-multimodal-recommendation.html": "2026-05-25",
     "./papers/rporec.html": "2026-05-22",
     "./papers/llm-ad-retrieval.html": "2026-05-22",
     "./papers/search-e1.html": "2026-05-22",
