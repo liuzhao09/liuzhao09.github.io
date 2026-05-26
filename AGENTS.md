@@ -1,7 +1,8 @@
 # Agent Instructions
 
 This repository is a static GitHub Pages site for `https://liuzhao09.github.io/`.
-It currently hosts paper-reading notes converted from local Markdown files under:
+It hosts paper-reading notes and daily news exploration reports. Paper notes are
+converted from local Markdown files under:
 
 `/Users/liuzhao/Desktop/论文笔记`
 
@@ -25,9 +26,11 @@ Use absolute paths and keep one before/after pair per changed file.
 - `index.html`: simple homepage and entry point.
 - `papers.html`: paper library and search/list page.
 - `papers/*.html`: generated paper-note detail pages.
+- `news.html`: daily news exploration list page.
+- `news/*.html`: generated daily news report detail pages.
 - `assets/css/site.css`: shared styles, including Markdown and MathJax layout.
-- `assets/js/site-index.js`: shared homepage/library metadata, including note
-  record dates and DOM-derived count synchronization.
+- `assets/js/site-index.js`: shared homepage/library metadata, including paper
+  and news record dates plus DOM-derived count synchronization.
 - `assets/images/<slug>/`: copied images for each paper note.
 
 The site is plain static HTML/CSS/JS. There is no build system and no frontend
@@ -177,3 +180,20 @@ Important distinction: a skill gives agents reusable instructions; it is not
 the same as an executable converter. For direct repeat execution, a script is
 more reliable. A future skill should point to that script instead of asking the
 agent to rewrite conversion logic every time.
+
+## Adding News Reports
+
+News reports are generated from `/Users/liuzhao/Desktop/Codex-Agent/news-daily`.
+When syncing a daily report:
+
+1. Read `/Users/liuzhao/Desktop/Codex-Agent/news-daily/AUTOMATION_PROMPT.md`
+   and `news_scope.yaml` first.
+2. Convert `news-daily/reports/YYYY-MM-DD.md` into
+   `news/YYYY-MM-DD.html`.
+3. Add or update the corresponding card in `news.html`.
+4. Add the record date to `assets/js/site-index.js` using the page href as the
+   key, for example `"./news/2026-05-26.html": "2026-05-26"`.
+5. Keep homepage `index.html` as a two-section entry for `论文精读` and
+   `新闻探索`; do not turn it back into a paper-only homepage.
+6. News reports must preserve source time, event time, confidence labels, and
+   data gaps. Do not convert unverified social media claims into facts.

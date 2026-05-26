@@ -70,6 +70,10 @@
     "./papers/llm2rec.html": "2026-05-19",
   });
 
+  const newsDates = Object.freeze({
+    "./news/2026-05-26.html": "2026-05-26",
+  });
+
   const setText = (selector, value) => {
     const node = document.querySelector(selector);
     if (node) node.textContent = value;
@@ -80,10 +84,14 @@
 
     try {
       const url = new URL(href, window.location.href);
-      const marker = "/papers/";
-      const index = url.pathname.indexOf(marker);
-      if (index === -1) return href;
-      return `./papers/${url.pathname.slice(index + marker.length)}`;
+      const markers = ["/papers/", "/news/"];
+      for (const marker of markers) {
+        const index = url.pathname.indexOf(marker);
+        if (index !== -1) {
+          return `.${marker}${url.pathname.slice(index + marker.length)}`;
+        }
+      }
+      return href;
     } catch {
       return href;
     }
@@ -93,7 +101,8 @@
     const link = node.matches("a") ? node : node.querySelector("a");
     if (!link) return "";
 
-    const date = link.dataset.noteDate || noteDates[normalizeHref(link.getAttribute("href"))];
+    const normalizedHref = normalizeHref(link.getAttribute("href"));
+    const date = link.dataset.noteDate || noteDates[normalizedHref] || newsDates[normalizedHref];
     if (date) link.dataset.noteDate = date;
     return date || "";
   };
@@ -104,7 +113,6 @@
 
   const syncHome = () => {
     const recentItems = [...document.querySelectorAll(".recent-item")];
-    if (!recentItems.length) return;
 
     recentItems.forEach((item) => {
       const date = dateForNode(item);
@@ -122,10 +130,17 @@
     });
 
     const count = recentItems.length;
-    const latest = latestDate(recentItems);
-    setText("#home-note-count", String(count));
+    const paperCount = count || Object.keys(noteDates).length;
+    const latest = latestDate(recentItems) || Object.values(noteDates).sort().at(-1) || "";
+    const newsCount = Object.keys(newsDates).length;
+    const newsLatest = Object.values(newsDates).sort().at(-1) || "";
+
+    setText("#home-note-count", String(paperCount));
     setText("#recent-count", `${count} / ${count}`);
-    if (latest) setText("#home-updated", formatMonth(latest));
+    setText("#home-news-count", String(newsCount));
+    if (latest) setText("#home-paper-latest", `最新同步：${latest}`);
+    if (newsLatest) setText("#home-news-latest", `最新同步：${newsLatest}`);
+    if (latest || newsLatest) setText("#home-updated", formatMonth([latest, newsLatest].filter(Boolean).sort().at(-1)));
   };
 
   const syncLibrary = () => {
@@ -144,8 +159,25 @@
     }
   };
 
+  const syncNewsLibrary = () => {
+    const reports = [...document.querySelectorAll(".news-list .library-paper")];
+    if (!reports.length) return;
+
+    const count = reports.length;
+    const latest = latestDate(reports);
+    const searchInput = document.querySelector("#news-search");
+    const resultCount = document.querySelector("#news-result-count");
+
+    setText("#news-report-count", String(count));
+    if (latest) setText("#news-latest", latest);
+    if (resultCount && (!searchInput || searchInput.value.trim() === "")) {
+      resultCount.textContent = `${count} 篇`;
+    }
+  };
+
   document.addEventListener("DOMContentLoaded", () => {
     syncHome();
     syncLibrary();
+    syncNewsLibrary();
   });
 })();
