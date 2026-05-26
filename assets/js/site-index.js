@@ -79,6 +79,7 @@
   });
 
   const housingDates = Object.freeze({
+    "./housing/2026-05-27.html": "2026-05-27",
     "./housing/2026-05-24.html": "2026-05-24",
   });
 
