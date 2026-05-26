@@ -1,7 +1,8 @@
 # Agent Instructions
 
 This repository is a static GitHub Pages site for `https://liuzhao09.github.io/`.
-It hosts paper-reading notes and daily news exploration reports. Paper notes are
+It hosts paper-reading notes, daily news exploration reports, global market
+briefings, and housing analysis reports. Paper notes are
 converted from local Markdown files under:
 
 `/Users/liuzhao/Desktop/论文笔记`
@@ -28,9 +29,13 @@ Use absolute paths and keep one before/after pair per changed file.
 - `papers/*.html`: generated paper-note detail pages.
 - `news.html`: daily news exploration list page.
 - `news/*.html`: generated daily news report detail pages.
+- `market.html`: global market briefing list page.
+- `market/*.html`: generated daily global market report detail pages.
+- `housing.html`: housing analysis list page.
+- `housing/*.html`: generated daily housing report detail pages.
 - `assets/css/site.css`: shared styles, including Markdown and MathJax layout.
 - `assets/js/site-index.js`: shared homepage/library metadata, including paper
-  and news record dates plus DOM-derived count synchronization.
+  and report record dates plus DOM-derived count synchronization.
 - `assets/images/<slug>/`: copied images for each paper note.
 
 The site is plain static HTML/CSS/JS. There is no build system and no frontend
@@ -181,7 +186,7 @@ the same as an executable converter. For direct repeat execution, a script is
 more reliable. A future skill should point to that script instead of asking the
 agent to rewrite conversion logic every time.
 
-## Adding News Reports
+## Adding Daily Reports
 
 News reports are generated from `/Users/liuzhao/Desktop/Codex-Agent/news-daily`.
 When syncing a daily report:
@@ -193,7 +198,22 @@ When syncing a daily report:
 3. Add or update the corresponding card in `news.html`.
 4. Add the record date to `assets/js/site-index.js` using the page href as the
    key, for example `"./news/2026-05-26.html": "2026-05-26"`.
-5. Keep homepage `index.html` as a two-section entry for `论文精读` and
-   `新闻探索`; do not turn it back into a paper-only homepage.
+5. Keep homepage `index.html` as a multi-section entry for `论文精读`,
+   `新闻探索`, `国际市场`, and `房价分析`; do not turn it back into a
+   paper-only homepage.
 6. News reports must preserve source time, event time, confidence labels, and
    data gaps. Do not convert unverified social media claims into facts.
+
+Market reports are generated from
+`/Users/liuzhao/Desktop/Codex-Agent/global-market-daily`. Convert
+`global-market-daily/reports/YYYY-MM-DD.md` into `market/YYYY-MM-DD.html`,
+update `market.html`, and add `"./market/YYYY-MM-DD.html": "YYYY-MM-DD"` to
+`assets/js/site-index.js`. Preserve market data times, trading-session
+cutoffs, delayed quote labels, and investment-risk boundaries.
+
+Housing reports are generated from
+`/Users/liuzhao/Desktop/Codex-Agent/housing-daily`. Convert
+`housing-daily/reports/YYYY-MM-DD.md` into `housing/YYYY-MM-DD.html`, update
+`housing.html`, and add `"./housing/YYYY-MM-DD.html": "YYYY-MM-DD"` to
+`assets/js/site-index.js`. Preserve data freshness, official/platform口径,
+`数据未验证`, `口径不可比`, and non-advice risk language.

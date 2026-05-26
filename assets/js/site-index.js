@@ -74,6 +74,14 @@
     "./news/2026-05-26.html": "2026-05-26",
   });
 
+  const marketDates = Object.freeze({
+    "./market/2026-05-26.html": "2026-05-26",
+  });
+
+  const housingDates = Object.freeze({
+    "./housing/2026-05-24.html": "2026-05-24",
+  });
+
   const setText = (selector, value) => {
     const node = document.querySelector(selector);
     if (node) node.textContent = value;
@@ -84,7 +92,7 @@
 
     try {
       const url = new URL(href, window.location.href);
-      const markers = ["/papers/", "/news/"];
+      const markers = ["/papers/", "/news/", "/market/", "/housing/"];
       for (const marker of markers) {
         const index = url.pathname.indexOf(marker);
         if (index !== -1) {
@@ -102,7 +110,12 @@
     if (!link) return "";
 
     const normalizedHref = normalizeHref(link.getAttribute("href"));
-    const date = link.dataset.noteDate || noteDates[normalizedHref] || newsDates[normalizedHref];
+    const date =
+      link.dataset.noteDate ||
+      noteDates[normalizedHref] ||
+      newsDates[normalizedHref] ||
+      marketDates[normalizedHref] ||
+      housingDates[normalizedHref];
     if (date) link.dataset.noteDate = date;
     return date || "";
   };
@@ -134,13 +147,22 @@
     const latest = latestDate(recentItems) || Object.values(noteDates).sort().at(-1) || "";
     const newsCount = Object.keys(newsDates).length;
     const newsLatest = Object.values(newsDates).sort().at(-1) || "";
+    const marketCount = Object.keys(marketDates).length;
+    const marketLatest = Object.values(marketDates).sort().at(-1) || "";
+    const housingCount = Object.keys(housingDates).length;
+    const housingLatest = Object.values(housingDates).sort().at(-1) || "";
+    const latestSiteDate = [latest, newsLatest, marketLatest, housingLatest].filter(Boolean).sort().at(-1);
 
     setText("#home-note-count", String(paperCount));
     setText("#recent-count", `${count} / ${count}`);
     setText("#home-news-count", String(newsCount));
+    setText("#home-market-count", String(marketCount));
+    setText("#home-housing-count", String(housingCount));
     if (latest) setText("#home-paper-latest", `最新同步：${latest}`);
     if (newsLatest) setText("#home-news-latest", `最新同步：${newsLatest}`);
-    if (latest || newsLatest) setText("#home-updated", formatMonth([latest, newsLatest].filter(Boolean).sort().at(-1)));
+    if (marketLatest) setText("#home-market-latest", `最新同步：${marketLatest}`);
+    if (housingLatest) setText("#home-housing-latest", `最新同步：${housingLatest}`);
+    if (latestSiteDate) setText("#home-updated", formatMonth(latestSiteDate));
   };
 
   const syncLibrary = () => {
@@ -175,9 +197,43 @@
     }
   };
 
+  const syncMarketLibrary = () => {
+    const reports = [...document.querySelectorAll(".market-list .library-paper")];
+    if (!reports.length) return;
+
+    const count = reports.length;
+    const latest = latestDate(reports);
+    const searchInput = document.querySelector("#market-search");
+    const resultCount = document.querySelector("#market-result-count");
+
+    setText("#market-report-count", String(count));
+    if (latest) setText("#market-latest", latest);
+    if (resultCount && (!searchInput || searchInput.value.trim() === "")) {
+      resultCount.textContent = `${count} 篇`;
+    }
+  };
+
+  const syncHousingLibrary = () => {
+    const reports = [...document.querySelectorAll(".housing-list .library-paper")];
+    if (!reports.length) return;
+
+    const count = reports.length;
+    const latest = latestDate(reports);
+    const searchInput = document.querySelector("#housing-search");
+    const resultCount = document.querySelector("#housing-result-count");
+
+    setText("#housing-report-count", String(count));
+    if (latest) setText("#housing-latest", latest);
+    if (resultCount && (!searchInput || searchInput.value.trim() === "")) {
+      resultCount.textContent = `${count} 篇`;
+    }
+  };
+
   document.addEventListener("DOMContentLoaded", () => {
     syncHome();
     syncLibrary();
     syncNewsLibrary();
+    syncMarketLibrary();
+    syncHousingLibrary();
   });
 })();
