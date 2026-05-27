@@ -71,6 +71,7 @@
   });
 
   const newsDates = Object.freeze({
+    "./news/2026-05-27.html": "2026-05-27",
     "./news/2026-05-26.html": "2026-05-26",
   });
 
