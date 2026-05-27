@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ReSID：推荐原生 Semantic ID tokenizer 解读 | liuzhao09</title>
+    <meta name="description" content="Central South University 等提出 ReSID，用 FAMAE 学推荐充分字段表征，用 GAOQ 做全局对齐正交量化，重新设计生成式推荐的 Semantic ID tokenizer。">
+    <link rel="stylesheet" href="../assets/css/site.css">
+    <script>
+      window.MathJax = { tex: { inlineMath: [['$', '$'], ['\\(', '\\)']], displayMath: [['$$', '$$'], ['\\[', '\\]']] }, svg: { fontCache: 'global' } };
+    </script>
+    <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+  </head>
+  <body class="paper-page">
+    <header class="site-header paper">
+      <nav class="nav" aria-label="主导航">
+        <a class="brand" href="../index.html"><span class="brand-mark">LZ</span><span>liuzhao09</span></a>
+        <div class="nav-links">
+          <a href="../index.html">首页</a>
+          <a href="../papers.html">论文库</a>
+        </div>
+      </nav>
+    </header>
+
+    <main class="page-shell paper-shell">
+      <section class="paper-hero note-hero">
+        <div>
+          <p class="breadcrumb"><a href="../papers.html">论文库</a> / ReSID</p>
+          <h1 class="paper-title">ReSID：推荐原生 Semantic ID tokenizer</h1>
+          <p class="paper-dek">用 Field-Aware Masked Auto-Encoding 学推荐充分字段表征，并用 Globally Aligned Orthogonal Quantization 让 SID 更适合自回归生成。</p>
+          <div class="tag-row"><span class="tag">Generative Recommendation</span><span class="tag">Semantic ID</span><span class="tag">Tokenizer</span><span class="tag">Recommender Systems</span></div>
+        </div>
+        <aside class="paper-meta" aria-label="论文信息">
+          <dl>
+            <div><dt>来源</dt><dd>arXiv 2026</dd></div>
+            <div><dt>机构</dt><dd>Central South University / Shopee / NTU</dd></div>
+            <div><dt>记录日期</dt><dd>2026-05-27</dd></div>
+            <div><dt>主题</dt><dd>生成式推荐 / Semantic ID</dd></div>
+          </dl>
+        </aside>
+      </section>
+
+      <div class="article-layout note-layout">
+        <nav class="toc" aria-label="文章目录">
+          <a class="toc-l1" href="#1-背景和问题">1. 背景和问题</a>
+          <a class="toc-l1" href="#2-方法">2. 方法</a>
+          <a class="toc-l2" href="#2-1-从语义中心-sid-到推荐原生-sid-的三阶段重构">2.1 从语义中心 SID 到推荐原生 SID 的三阶段重构</a>
+          <a class="toc-l2" href="#2-2-famae-目标位置的字段感知掩码自编码">2.2 FAMAE：目标位置的字段感知掩码自编码</a>
+          <a class="toc-l2" href="#2-3-预测充分性的互信息解释和任务感知指标">2.3 预测充分性的互信息解释和任务感知指标</a>
+          <a class="toc-l2" href="#2-4-gaoq-用全局对齐降低前缀条件不确定性">2.4 GAOQ：用全局对齐降低前缀条件不确定性</a>
+          <a class="toc-l2" href="#2-5-训练-量化和生成推理链路">2.5 训练、量化和生成推理链路</a>
+          <a class="toc-l1" href="#3-实验结果">3. 实验结果</a>
+          <a class="toc-l2" href="#3-1-主结果-公平比较比单纯跑分更重要">3.1 主结果：公平比较比单纯跑分更重要</a>
+          <a class="toc-l2" href="#3-2-消融-famae-和-gaoq-都不是可替换小模块">3.2 消融：FAMAE 和 GAOQ 都不是可替换小模块</a>
+          <a class="toc-l2" href="#3-3-任务感知指标-e-stage-质量能提前诊断">3.3 任务感知指标：E-stage 质量能提前诊断</a>
+          <a class="toc-l2" href="#3-4-效率-tokenizer-不依赖-llm-的工程收益">3.4 效率：tokenizer 不依赖 LLM 的工程收益</a>
+          <a class="toc-l2" href="#3-5-缩放趋势-sid-接口能否利用更大-backbone">3.5 缩放趋势：SID 接口能否利用更大 backbone</a>
+          <a class="toc-l2" href="#3-6-表示分析-famae-同时保留语义和协同结构">3.6 表示分析：FAMAE 同时保留语义和协同结构</a>
+          <a class="toc-l2" href="#3-7-gaoq-歧义证据和完整实验链条">3.7 GAOQ 歧义证据和完整实验链条</a>
+          <a class="toc-l1" href="#4-总结">4. 总结</a>
+          <a class="toc-l2" href="#4-1-我的判断">4.1 我的判断</a>
+          <a class="toc-l2" href="#4-2-工程启发与复现建议">4.2 工程启发与复现建议</a>
+          <a class="toc-l2" href="#4-3-局限与后续跟进">4.3 局限与后续跟进</a>
+        </nav>
+        <article class="article markdown-body">
+<h1>ReSID：重新思考生成式推荐 tokenizer</h1>
+<p>这篇 arXiv 论文《<a href="https://arxiv.org/abs/2602.02338">Rethinking Generative Recommender Tokenizer: Recsys-Native Encoding and Semantic Quantization Beyond LLMs</a>》来自 Central South University，一作 Yu Liang，合作机构包括 Shopee 和 Nanyang Technological University。论文提出 ReSID，把生成式推荐中的 Semantic ID tokenizer 从“先用 LLM 或多模态基础模型学语义 embedding，再做通用量化”的路线，改成推荐原生的表征学习与全局对齐量化；官方实现已在 GitHub 仓库 <a href="https://github.com/FuCongResearchSquad/ReSID">FuCongResearchSquad/ReSID</a> 公开。阅读这篇论文时，我会把重点放在三个问题上：为什么 semantic-centric SID 和推荐目标错配，FAMAE 如何用字段级 masked auto-encoding 保留推荐充分信息，GAOQ 又如何让离散 code 在自回归解码时更可预测。</p>
+<h2 id="1-背景和问题">1. 背景和问题</h2>
+<p>生成式推荐里的 Semantic ID 思路，本质上是在问一个规模化推荐系统的接口问题：如果候选 item 数量达到百万、千万甚至更大，模型还要不要把每个 item 当作一个彼此无关的原子 ID 来预测。传统序列推荐通常给每个 item 一个 embedding，然后根据用户历史向量和 item embedding 做打分或近邻检索；生成式推荐则希望把 item 编成一串短 token，例如 <span class="math-inline">$[21,3,54]$</span>，让 encoder-decoder 或自回归模型像生成文本 token 一样逐位生成目标 item 的 SID。这个改写的诱惑很明显：它把巨大 item vocab 压成较小的 token vocab，理论上能共享语义结构，也能把 beam search、prefix constraint、sequence generation 等语言模型工具引入推荐。</p>
+<p>问题在于，很多 SID tokenizer 并不是为了推荐目标原生设计的。论文把既有路线概括为 semantic-centric pipeline：先从文本、图像或多模态基础模型中抽取 item embedding，再用 RQ-VAE、RQ-KMeans、Hierarchical K-Means 等通用量化方法离散化，最后把离散码交给生成式推荐模型预测。这个 pipeline 的核心假设是，语义相近的 item 应该拥有相近的离散码。但推荐系统里的“相近”往往不是纯语义相近，而是用户行为流形上的相近。零食、气球、餐具在文本或视觉上可能很远，却会在派对场景中被同一用户群体连续购买；两个外观相似的商品也可能因为价格带、库存、受众和上下文差异，在协同信号中完全不同。若 tokenizer 主要受 foundation model 的语义空间支配，下游生成器就会被迫学习一个和用户行为目标不完全一致的监督信号。</p>
+<p><img alt="Figure 1: SID tokenization mismatch" src="../assets/images/resid/1.jpg"></p>
+<p>Figure 1 把这种错配画得很直观。左侧说明 semantic supervision 和 collaborative supervision 对 item embedding geometry 的要求不同：语义模型会按标题、类目、描述把 item 拉近或拉远，协同信号则按共同购买、共同点击和序列上下文塑造距离。右侧更关键：即便前面的 embedding 还算可用，后续 vector quantization 也可能产生不适合自回归解码的 code。生成器在 beam search 中逐层预测 <span class="math-inline">$C_1,C_2,C_3$</span>，如果第二层或第三层 token 的语义解释高度依赖前缀，或者相同局部 index 在不同 parent 下指向完全不同的方向，那么 <span class="math-inline">$H(C_2\mid C_1)$</span>、<span class="math-inline">$H(C_3\mid C_{1:2})$</span> 都会偏高。换句话说，SID 不只是压缩 item 的 label，它同时是生成模型的训练目标；一个离散码只要在几何上重构不错，却在 token 序列上难预测，仍然会伤害推荐。</p>
+<p>这篇论文要纠正的第一个偏差，是把“语义信息越强越好”换成“推荐充分信息必须主导”。语义当然有价值，尤其在冷启动、类目约束和属性泛化中很重要；但如果语义 embedding 的训练目标与下一 item 预测弱耦合，推荐系统需要的协同关系会被稀释。作者明确提出，E-stage 表征学习应该 collaboration-dominant，structured feature 和 semantic field 只作为辅助上下文，而不是让 LLM embedding 成为主导空间。这个判断对工业推荐很现实：真实链路里已有大量结构化字段、类目、店铺、行为统计和用户上下文，强行把它们“翻译”成文本再交给基础模型，既昂贵，也会丢掉字段身份和行为口径。</p>
+<p>第二个偏差是把量化目标只看成 reconstruction。RQ-VAE 或 RQ-KMeans 可以最小化连续 embedding 到离散 code 的重构误差，但生成式推荐不是一次性拿到完整 code 后再解释 item，而是按 prefix 逐 token 解码。Hierarchical K-Means 的树结构能降低部分 prefix uncertainty，但若每个 parent 下的 child index 都是本地任意编号，同一个第二层 token “1” 在不同 first-level prefix 下就可能指向完全不同的语义方向。对自回归模型来说，这种本地编号会让 token embedding 变成多峰分布：同一个 token 在不同 prefix 下承担不同含义，导致 code-level semantic instability。ReSID 的核心贡献就是把表征学习和量化都重新对齐到推荐目标：FAMAE 学推荐充分的结构化 item 表征，GAOQ 让离散码在全局索引意义上更稳定、更低歧义、更适合自回归预测。</p>
+<h2 id="2-方法">2. 方法</h2>
+<h3 id="2-1-从语义中心-sid-到推荐原生-sid-的三阶段重构">2.1 从语义中心 SID 到推荐原生 SID 的三阶段重构</h3>
+<p>论文首先把 SID-based generative recommendation 明确成三阶段系统。给定用户历史 <span class="math-inline">$H=(i_1,\ldots,i_{T-1})$</span>，目标是预测下一 item <span class="math-inline">$i_T$</span>。每个 item 同时有原始元数据 <span class="math-inline">$X_t$</span>，例如文本、图像或其他非结构内容，也有从交互和元数据中工程化得到的结构化字段 <span class="math-inline">$F_t=\{f_t^{(1)},\ldots,f_t^{(J)}\}$</span>。SID-based 模型用有限长度序列 <span class="math-inline">$C_t=(c_1,\ldots,c_L)$</span> 替代原始 item identifier，系统包含三件事：encoder <span class="math-inline">$E_\theta$</span> 把 item 信息映射成连续表示 <span class="math-inline">$\mathbf{z}_t$</span>，quantizer <span class="math-inline">$Q$</span> 把 <span class="math-inline">$\mathbf{z}_t$</span> 离散化成 <span class="math-inline">$C_t$</span>，generator <span class="math-inline">$G_\phi$</span> 根据用户历史预测目标 SID。</p>
+<p>如果端到端写目标，理想形式会是让 <span class="math-inline">$G_\phi$</span> 直接最小化目标 SID 的 cross-entropy。但 SID 本身来自 upstream encoder-quantizer，这就产生了一个自指监督问题：下游生成器要学习的 target，由上游 tokenizer 定义；如果 tokenizer 生成的 SID 噪声大、和协同目标错配或局部编号不稳定，下游模型没有机制自动修正这个监督分布。ReSID 因此不追求“把 tokenizer 和 generator 直接端到端绑死”，而是坚持三阶段解耦，但要求 E-stage 和 Q-stage 的目标本身就面向推荐生成。</p>
+<p><img alt="Figure 2: ReSID method overview" src="../assets/images/resid/2.jpg"></p>
+<p>Figure 2 是 ReSID 的总览。左侧 FAMAE 在用户历史和目标 item 的结构化字段上做 masked field prediction：历史 item 的字段完整输入，目标 item 的部分字段被替换成 field-specific mask token，Transformer 在目标位置输出 hidden state 并预测被遮住的字段。完成 FAMAE 训练后，真正交给量化器的不是混入用户历史的目标 hidden state，而是所有字段 embedding 的 concat 表示。右侧 GAOQ 则先做 balanced K-Means 的层级划分，再把每个 parent 下的 child centroid 做 residual centering，并与全局共享的近似正交 anchor 通过 Hungarian matching 对齐。这样生成的 SID 既保留层级压缩能力，又让同一层的相同 index 尽量跨 prefix 表达一致方向。</p>
+<p>这一框架有两个值得注意的工程边界。第一，ReSID 并不依赖 LLM 生成 item embedding。论文对需要 text embedding 的 baseline 使用 Sentence-T5-xxl，但 ReSID 直接基于 item-ID、store ID、一级/二级/三级类目等结构化字段学习表示。第二，下游 generator 仍然是统一的 T5-style encoder-decoder，和其他 SID baseline 保持相同 G-stage 配置。也就是说，论文希望把收益归因到 tokenizer，而不是归因到更强的 generator 或额外侧信息。这个控制很重要，因为很多 SID 论文容易把“多用了 item metadata”的提升误认为“生成式推荐范式”的提升。</p>
+<h3 id="2-2-famae-目标位置的字段感知掩码自编码">2.2 FAMAE：目标位置的字段感知掩码自编码</h3>
+<p>FAMAE 的基本假设是推荐系统常见的条件独立口径：当结构化字段和用户上下文足够充分时，预测目标 <span class="math-inline">$Y$</span> 对原始元数据 <span class="math-inline">$X$</span> 条件独立，即 <span class="math-inline">$Y\perp\!\!\!\perp X\mid(F_T,H)$</span>。这个假设不是说文本和图像没用，而是说它们最终应该被抽取成推荐系统原生字段、类目或属性后进入建模；在这种口径下，结构化字段可以被看作预测用户行为的 sufficient statistics。FAMAE 的训练目标就建立在这个前提上：给定用户历史和目标 item 的未遮住字段，预测目标 item 被遮住的字段，而不是做通用语义重构。</p>
+<p>核心损失写成：</p>
+<p><div class="math-display">$$
+\mathcal{L}_{\mathrm{FAMAE}}(\theta)=\mathbb{E}_{\mathcal{M}\sim\pi}\left[\sum_{k\in\mathcal{M}}\alpha_k\cdot\left(-\log q_{\theta,k}(f_T^{(k)}\mid \mathbf{h}_T)\right)\right].
+$$</div></p>
+<p>符号解释：<span class="math-inline">$\mathcal{M}$</span> 是由 masking policy <span class="math-inline">$\pi$</span> 采样得到的被遮字段集合；<span class="math-inline">$k$</span> 是字段编号；<span class="math-inline">$\alpha_k$</span> 控制不同字段的重要性；<span class="math-inline">$f_T^{(k)}$</span> 是目标 item 的第 <span class="math-inline">$k$</span> 个字段；<span class="math-inline">$\mathbf{h}_T$</span> 是 Transformer 在目标位置输出的上下文化表示。这个目标不是把目标 item 表示成一个融合向量后预测一个标签，而是保留字段粒度的监督。字段粒度很关键，因为 item-ID、店铺、类目层级、属性之间的关系不是无差别特征拼接；如果在早期就用 pooling 或 MLP 把它们混成不可逆的单向量，后续量化时会难以区分哪些信息来自协同行为，哪些信息来自类目结构。</p>
+<p>字段预测分布用 scaled cosine softmax 定义：</p>
+<p><div class="math-display">$$
+q_{\theta,k}(f_T^{(k)}\mid \mathbf{h})=
+\frac{\exp\left(\mathcal{K}(\mathbf{h},\mathbf{e}_T^{(k)})\right)}
+{\sum_{v\in\mathcal{V}_k}\exp\left(\mathcal{K}(\mathbf{h},\mathbf{e}_v^{(k)})\right)},\quad
+\mathcal{K}(\cdot,\cdot)=\sqrt{d}\cdot\cos(\cdot,\cdot).
+$$</div></p>
+<p>符号解释：<span class="math-inline">$\mathcal{V}_k$</span> 是字段 <span class="math-inline">$k$</span> 的取值空间；<span class="math-inline">$\mathbf{e}_T^{(k)}=emb_\theta(f_T^{(k)})$</span> 是字段 embedding；<span class="math-inline">$d$</span> 是 embedding 维度；<span class="math-inline">$\mathcal{K}$</span> 用缩放余弦相似度计算 hidden state 与候选字段值的匹配。这个分布实际把每个字段预测变成一个分类问题。若字段 vocab 很大，论文在实现细节中使用 sampled classification，采样 128 个 negative，并保持 embedding/hidden size 128、2 层 Transformer、4 个 attention heads、batch size 2048 等相对轻量配置。与基于 LLM 的 tokenizer 相比，这里的训练对象和推荐系统字段更接近，也更容易在大规模 item catalog 上迭代。</p>
+<p>FAMAE 的输入构造也体现了推荐原生目标。序列前 <span class="math-inline">$T-1$</span> 个位置是用户历史 item，最后一个位置是目标 item；每个位置的多个字段 embedding 与 learnable positional encoding 相加后送入双向 Transformer。对目标 item，作者先均匀采样 <span class="math-inline">$K\sim U\{1,\ldots,J\}$</span>，再随机选取 <span class="math-inline">$K$</span> 个字段形成 <span class="math-inline">$\mathcal{M}_K$</span>，并用字段专属 mask token <span class="math-inline">$\mathbf{m}_j$</span> 替换被遮字段：</p>
+<p><div class="math-display">$$
+\tilde{\mathbf{e}}_T=\mathbf{p}_T+\sum_{j=1}^{J}\mathbf{e}_T^{(j)},\quad
+\mathbf{e}_T^{(j)}=
+\begin{cases}
+\mathbf{m}_j, &amp; j\in\mathcal{M}_K,\\
+emb_\theta(f_T^{(j)}), &amp; j\notin\mathcal{M}_K.
+\end{cases}
+$$</div></p>
+<p>符号解释：<span class="math-inline">$\tilde{\mathbf{e}}_T$</span> 是目标位置送入 Transformer 的输入 token；<span class="math-inline">$\mathbf{p}_T$</span> 是位置编码；<span class="math-inline">$\mathbf{m}_j$</span> 是第 <span class="math-inline">$j$</span> 个字段的 mask token。字段专属 mask token 的作用是保留字段身份：模型知道“这里缺的是店铺字段”还是“这里缺的是三级类目字段”，而不是只看到一个通用缺失符号。训练后用于 SID quantization 的 item 表示不是 <span class="math-inline">$\mathbf{h}_T$</span>，因为 <span class="math-inline">$\mathbf{h}_T$</span> 混入了用户历史 <span class="math-inline">$H$</span>，会带有 user-specific context；论文取所有字段 embedding 的拼接 <span class="math-inline">$\operatorname{concat}(\{\mathbf{e}^{(j)}\}_{j=1}^J)$</span> 作为 item-level representation，这样既保留字段结构，又避免把某个用户上下文写入全局 item code。</p>
+<h3 id="2-3-预测充分性的互信息解释和任务感知指标">2.3 预测充分性的互信息解释和任务感知指标</h3>
+<p>论文没有把 FAMAE 只描述成工程 trick，而是给出一个互信息下界解释。设 <span class="math-inline">$w_k=\alpha_k\Pr_{\mathcal{M}\sim\pi}(k\in\mathcal{M})$</span>，则有：</p>
+<p><div class="math-display">$$
+\sum_{k=1}^{J}w_k I(\mathbf{h}_T;f_T^{(k)})\ge
+\sum_{k=1}^{J}w_k H(f_T^{(k)})-\mathcal{L}_{\mathrm{FAMAE}}(\theta).
+$$</div></p>
+<p>符号解释：<span class="math-inline">$I(\mathbf{h}_T;f_T^{(k)})$</span> 表示 hidden state 与第 <span class="math-inline">$k$</span> 个字段之间的互信息；<span class="math-inline">$H(f_T^{(k)})$</span> 是字段熵；<span class="math-inline">$\mathcal{L}_{\mathrm{FAMAE}}$</span> 是上面的字段预测损失。右侧第一项与模型参数无关，因此最小化 FAMAE loss 会提高一个 mask-weighted mutual information lower bound。这个结论说明 FAMAE 不是单纯“多任务预测字段”，而是在鼓励目标位置表示保留能够恢复结构化字段的信息；只要这些结构化字段和用户上下文足以预测行为目标，这种表示就更接近推荐充分表征。</p>
+<p>论文还用 Data Processing Inequality 解释为什么单标签序列模型表示不够。标准 SASRec/BERT4Rec 类模型通常预测一个融合后的 next-item representation，可以看成 <span class="math-inline">$\mathbf{u}_T=f(F_T)$</span>，其中 <span class="math-inline">$f$</span> 是 pooling 或 MLP 等不可逆融合。数据处理不等式给出：</p>
+<p><div class="math-display">$$
+I(\mathbf{h}_T;\mathbf{u}_T)\le I(\mathbf{h}_T;F_T)=\sum_{k=1}^{J}I(\mathbf{h}_T;f_T^{(k)}\mid F_T^{(&lt;k)}).
+$$</div></p>
+<p>符号解释：<span class="math-inline">$\mathbf{u}_T$</span> 是字段融合后的粗化表示；<span class="math-inline">$F_T^{(&lt;k)}$</span> 表示第 <span class="math-inline">$k$</span> 个字段之前的字段集合。等号只有在 <span class="math-inline">$\mathbf{u}_T$</span> 对 <span class="math-inline">$F_T$</span> 关于 <span class="math-inline">$\mathbf{h}_T$</span> 是充分统计量时才成立，而这在异构字段融合中很难满足。直观地说，若把 item-ID、类目层级、店铺等字段提前混合，模型也许能预测下一个 item，但量化器拿到的连续空间已经丢掉字段边界和部分语义结构。FAMAE 用多个字段之间的 mutual predictability 同时保留协同关系和必要语义约束，避免纯语义 embedding 与纯协同 embedding 各自的短板。</p>
+<p>基于这个解释，论文提出两个 task-aware embedding quality metrics。Metric 1 是 full-field masking 下的目标 item 预测准确率：目标 item 的所有结构化字段都被遮住，模型只能依赖用户历史和学习到的 embedding space 来恢复目标字段。它衡量的是协同建模能力，即 <span class="math-inline">$H$</span> 中的序列信息是否能通过表示空间传递到目标 item。Metric 2 是 single-field masking 下的 item-ID 预测准确率：只遮 item-ID 字段，其他结构化字段保留。它衡量的是表示空间是否保留细粒度、可区分的语义和空间结构。两个指标分别对应“协同可预测”和“语义可辨别”，比单看重构误差或下游 G-stage 结果更早、更便宜，也能帮助判断 E-stage checkpoint 是否值得进入量化阶段。</p>
+<h3 id="2-4-gaoq-用全局对齐降低前缀条件不确定性">2.4 GAOQ：用全局对齐降低前缀条件不确定性</h3>
+<p>GAOQ 解决 Q-stage 的目标错配。论文认为一个好的 SID quantizer 应同时满足三个条件：完整 code <span class="math-inline">$C$</span> 能低失真地重构连续表示 <span class="math-inline">$\mathbf{z}$</span>；每个单独 code <span class="math-inline">$c_l$</span> 都有足够语义贡献且尽量 prefix-invariant；code 序列本身要有低 prefix-conditional uncertainty，方便自回归生成器逐层预测。作者把理想目标写成：</p>
+<p><div class="math-display">$$
+\min_Q H(\mathbf{z}\mid C)+\mu\sum_l H(\mathbf{z}\mid c_l)+\lambda\sum_l H(c_l\mid C_{(&lt;l)}),\quad
+\text{s.t. }H(c_l)\approx\log|c_l|.
+$$</div></p>
+<p>符号解释：<span class="math-inline">$H(\mathbf{z}\mid C)$</span> 是完整 SID 对连续表示的重构不确定性；<span class="math-inline">$H(\mathbf{z}\mid c_l)$</span> 衡量单个 code 对表示的解释能力，越低说明单个 code 越有信息；<span class="math-inline">$H(c_l\mid C_{(&lt;l)})$</span> 衡量在已有 prefix 下第 <span class="math-inline">$l$</span> 层 code 的内在分支不确定性；<span class="math-inline">$H(c_l)\approx\log|c_l|$</span> 是边际 code 使用均衡约束，避免 index collapse。这个目标把重构、单码可解释性和顺序可预测性放在同一个框架里，比只最小化 RQ-VAE reconstruction loss 更贴近生成式推荐。</p>
+<p>本地索引的 Hierarchical K-Means 能降低一部分 <span class="math-inline">$H(c_l\mid C_{(&lt;l)})$</span>，因为树路径会逐层缩小空间；但它的问题是 child index 在每个 parent 下本地任意编号。同一个 <span class="math-inline">$c_l=1$</span> 在不同 prefix 下可能对应完全不同方向，造成 prefix-dependent ambiguity。论文用如下分解说明这个问题：</p>
+<p><div class="math-display">$$
+H(\mathbf{z}\mid c_l)=H(\mathbf{z}\mid c_l,C_{(&lt;l)})+I(\mathbf{z};C_{(&lt;l)}\mid c_l).
+$$</div></p>
+<p>符号解释：左侧是只知道第 <span class="math-inline">$l$</span> 层 code 时对连续表示的残余不确定性；第一项是在同时知道 prefix 后的细化重构不确定性；第二项是给定当前 code 后，连续表示与 prefix 之间仍然共享的信息。若 child index 是局部任意编号，<span class="math-inline">$I(\mathbf{z};C_{(&lt;l)}\mid c_l)$</span> 会变大，因为解释同一个 code 还必须依赖 prefix。对生成器来说，这意味着 token embedding 无法学到稳定含义；同一个 token 在不同 prefix 下多峰，降低了 sequence modeling 的效率。</p>
+<p>GAOQ 的做法是在 Hierarchical K-Means 之上加全局对齐。每一层先对 parent node 内 item 表示做 balanced K-Means，得到 child clusters 和 child centroids；然后对每个 child centroid 减去 parent centroid，形成 centered residual direction；再构造一组全局共享的近似正交 anchors；最后用 Hungarian matching 按 cosine similarity 把 child residual directions 一对一匹配到全局 anchor index。这样，同一层的同一个 index 不再只是“某个 parent 下的第 1 个 child”，而尽量表示跨 parent 一致的方向。</p>
+<p><img alt="Figure 8: GAOQ construction comparison" src="../assets/images/resid/9.jpg"></p>
+<p>Figure 8 对 GAOQ 的直觉解释很有帮助。Hierarchical K-Means 的本地编号会让 Vases 和 Snacks 这种协同关系不同的 item 在第二层共享相同 index，引发 conflict；RQ-VAE 虽然每层全局编号，但 residual quantization 的不同层之间缺少层级 prefix 约束，单个 code 的解释也不稳定。GAOQ 在层级 K-Means 的基础上做 centering 和 global alignment，让所有 parent 下的 child clusters 都对齐到同一组 anchor，因此同一个 second-level code 更像同一方向的语义或协同残差。这里的“orthogonal”不是为了数学优雅，而是为了减少 anchor 之间的方向重叠，让 code token 在生成器 embedding space 中更可分。</p>
+<p>算法复杂度方面，GAOQ 仍然是非参数化量化，不需要像 LETTER 那样训练昂贵的 tokenizer。设 item 数为 <span class="math-inline">$N$</span>，量化输入维度为 <span class="math-inline">$d_q$</span>，第 <span class="math-inline">$l$</span> 层 branching factor 为 <span class="math-inline">$b_l$</span>，balanced K-Means 迭代数为 <span class="math-inline">$I_l$</span>，全局 anchor 数为 <span class="math-inline">$g_l$</span>，第 <span class="math-inline">$l-1$</span> 层 parent 节点数为 <span class="math-inline">$P_{l-1}$</span>，论文给出主导 FLOPs：</p>
+<p><div class="math-display">$$
+\mathrm{FLOPs}_{\mathrm{GAOQ}}=\mathcal{O}\left(
+\sum_{l=1}^{L_q}I_lNb_ld_q+
+\sum_{l=2}^{L_q}\left[P_{l-1}b_ld_q+d_qg_l^2+P_{l-1}(b_lg_ld_q+b_l^3)\right]
+\right).
+$$</div></p>
+<p>符号解释：第一项来自各层 balanced K-Means 的距离计算；<span class="math-inline">$P_{l-1}b_ld_q$</span> 是 centering 成本；<span class="math-inline">$d_qg_l^2$</span> 是一次性构造近似正交 anchors 的 QR 成本；<span class="math-inline">$P_{l-1}(b_lg_ld_q+b_l^3)$</span> 来自每个 parent 下的 cosine similarity matrix 和 Hungarian matching。这个公式提醒我们，GAOQ 的工程成本主要随 item 数、分支因子和 parent 数增长，但它不像 LLM embedding 或训练式 RQ-VAE 那样需要大模型 tokenizer 反复训练。</p>
+<h3 id="2-5-训练-量化和生成推理链路">2.5 训练、量化和生成推理链路</h3>
+<p>ReSID 的完整链路可以按 E/Q/G 三阶段落地。E-stage 训练 FAMAE 和 side-info 增强的序列 baseline 保持相近模型规模：embedding/hidden size 128，2 层 Transformer，4 个 attention heads，FFN 维度 512，dropout 0.1，AdamW 学习率 0.001，batch size 2048，最多 500 epochs 并 early stopping。这些细节说明 FAMAE 更接近轻量序列模型预训练，而不是基础模型微调。训练完成后，每个 item 的表示由字段 embedding concat 得到，不包含某个用户历史的上下文化 hidden state。</p>
+<p>Q-stage 用 GAOQ 构造三层 SID。论文在附录列出每个 Amazon-2023 子集的 branching factors，例如 Musical Instruments 使用 <span class="math-inline">$(32,40,19)$</span>，Books 使用 <span class="math-inline">$(256,256,8)$</span>。第一层是原始 embedding space 的全局聚类，不需要跨 parent 对齐；第二层及之后才使用 residual centering、orthogonal anchors 和 Hungarian matching，因为这些层最容易出现本地 index 语义不一致。Balanced K-Means 还承担一个重要作用：保持每层 marginal code usage 接近均匀，从而满足 <span class="math-inline">$H(c_l)\approx\log|c_l|$</span> 的防 collapse 约束。</p>
+<p>G-stage 对所有 SID-based 方法保持相同 T5-style encoder-decoder：4 层 encoder、4 层 decoder，hidden size 128，FFN 维度 512，4 个 attention heads，batch size 2048，学习率 0.005，beam search size 50。这个控制设计让实验更干净，因为 ReSID 和 TIGER、LETTER、EAGER、UNGER、ETEGRec 的差别主要在 SID tokenizer。对于复现者，关键检查点应该放在 tokenizer 输出：每层 code 使用是否均衡，相同 code 在不同 prefix 下是否方向一致，SID 与用户历史 item 是否有更高 task-consistent overlap，而不是第一时间去换更大的 generator。</p>
+<h2 id="3-实验结果">3. 实验结果</h2>
+<h3 id="3-1-主结果-公平比较比单纯跑分更重要">3.1 主结果：公平比较比单纯跑分更重要</h3>
+<p>实验使用 Amazon-2023 review dataset 的十个子集：Musical Instruments、Video Games、Industrial &amp; Scientific、Baby Products、Arts, Crafts &amp; Sewing、Sports &amp; Outdoors、Toys &amp; Games、Health &amp; Household、Beauty &amp; Personal Care 和 Books。作者采用 5-core 过滤、按时间构造用户序列、leave-one-out 评估，最大序列长度 32，并抽取 store identifier 以及一到三级 category identifier 作为结构化 side information。指标是 Recall@5/10 和 NDCG@5/10。baseline 分三类：只用 item-ID 的 HGN、SASRec、BERT4Rec、S3-Rec；加入结构化字段的对应星号版本；以及 SID-based generative recommenders TIGER、LETTER、EAGER、UNGER、ETEGRec。</p>
+<p><img alt="Table 1: Main results" src="../assets/images/resid/3.jpg"></p>
+<p>Table 1 的读法要特别注意“fair comparison”。很多早期 SID 方法会用丰富 item metadata，而 sequential baseline 只用 item-ID，这会高估 SID 范式本身的收益。ReSID 把 sequential baseline 也加上 side-info 字段后，SASRec<em> 和 BERT4Rec</em> 明显变强，甚至能接近或超过一些 SID baseline；这说明过去一部分提升其实来自额外信息，而非生成式解码。即便在这个更严格口径下，ReSID 仍然取得最优平均结果。相对最强 SID baseline LETTER，ReSID 的平均相对提升为 R@5 16.03%、R@10 13.81%、N@5 16.17%、N@10 14.86%。相对 SASRec*，R@10 的平均提升只有 3.75%，这反而是有价值的结果：它说明 side-info augmented sequential recommender 已经很强，ReSID 的胜出不是靠不公平输入，而是靠 tokenizer 目标更对齐。</p>
+<p>主结果还支持一个更深的判断：单纯“引入协同信号”并不够。LETTER 也会在 SID tokenizer 中注入 collaborative supervision，因此它比纯语义 tokenizer TIGER 更强；但 ReSID 比 LETTER 更强，说明问题不只是有没有协同信号，而是协同信号是否在 representation learning 和 quantization 两个阶段都以推荐目标主导。ETEGRec 尝试端到端联合优化 tokenizer 和 downstream recommendation loss，但结果不如 ReSID，说明直接把量化空间与下游生成损失绑在一起会引入非平稳 supervision：SID 同时是中间表示和训练 target，若不断被 downstream loss 改写，生成器看到的 target distribution 也会变。</p>
+<h3 id="3-2-消融-famae-和-gaoq-都不是可替换小模块">3.2 消融：FAMAE 和 GAOQ 都不是可替换小模块</h3>
+<p><img alt="Table 2: Ablation results" src="../assets/images/resid/4.jpg"></p>
+<p>Table 2 把 ReSID 和五个受控变体比较。E-stage 消融固定 GAOQ，只替换表示来源：E1 用 LLM embedding，E2 用 SASRec representation，E3 用 BERT4Rec representation。Q-stage 消融固定 FAMAE，只替换量化器：Q1 用 RQ-VAE，Q2 用 Hierarchical K-Means。ReSID 对所有变体都有平均相对提升，其中相对 E2/E3 的 R@5 提升达到 11.05%/12.38%，说明纯协同序列表示虽然能预测 next item，但并不等价于好的 SID quantization representation，因为它可能缺少字段身份和结构化语义。相对 E1 的提升则说明纯 LLM 或文本语义 embedding 也不够，推荐协同目标不能只作为后处理微调。</p>
+<p>Q-stage 的结论同样直接。相对 Q1，ReSID 在 R@5 上提升 5.64%，说明只优化 reconstruction 的 RQ-VAE 对 autoregressive decoding uncertainty 不敏感；相对 Q2，R@10 只有 1.41% 的提升但 N@5/N@10 仍有提升，说明 Hierarchical K-Means 的层级结构已经帮到 prefix uncertainty，但缺少 global alignment 时仍存在同一 index 跨 prefix 语义不一致的问题。对工程复现来说，这张表给出了一组必要 sanity check：如果只用 FAMAE + RQ-VAE 就接近完整 ReSID，说明本地数据的 prefix ambiguity 可能不严重；如果 FAMAE + Hierarchical K-Means 与 GAOQ 差不多，则要检查 GAOQ 的 anchor matching 是否真正生效，或者下游 generator 是否没有充分使用 code token 的语义一致性。</p>
+<h3 id="3-3-任务感知指标-e-stage-质量能提前诊断">3.3 任务感知指标：E-stage 质量能提前诊断</h3>
+<p><img alt="Figure 3: Embedding quality metrics" src="../assets/images/resid/5.jpg"></p>
+<p>Figure 3 展示 FAMAE 训练过程中两个 embedding quality metrics 与下游 R@10 的关系。左图是 Musical Instruments，右图是 Baby Products；横轴是 Metric 1，即 full-field masking 时只依赖用户历史预测目标 item 的 R@10；右侧纵轴同时显示 Metric 2，即只遮 item-ID 字段时的 item-ID R@10。随着 FAMAE checkpoint 提升，downstream R@10 也同步提高，说明这两个 proxy metric 确实能反映 SID 下游质量。这个证据对生产训练很重要，因为完整 E/Q/G pipeline 代价不低；如果每个 FAMAE checkpoint 都必须跑完 GAOQ 和 T5 generator 才判断质量，迭代会很慢。Metric 1/2 允许先在 E-stage 做早期筛选，把“协同预测是否足够”和“字段语义是否可辨”拆开看。</p>
+<p>这两个指标也帮助定位失败原因。若 Metric 1 高而 Metric 2 低，表示模型能从历史预测目标，但字段空间缺少可区分语义，量化后可能形成语义模糊的 code；若 Metric 2 高而 Metric 1 低，说明字段结构和类目语义很好，但协同信号没有被历史上下文充分吸收，SID 可能回到 semantic-centric 的老问题。ReSID 的主张不是让两个指标无限高，而是在推荐充分和语义可辨之间找到合适交点。对于线上系统，可以把这两个指标作为 tokenizer 训练 dashboard 的前置质量门槛，避免只看最终 Recall 或 NDCG 才发现表示错配。</p>
+<h3 id="3-4-效率-tokenizer-不依赖-llm-的工程收益">3.4 效率：tokenizer 不依赖 LLM 的工程收益</h3>
+<p><img alt="Table 3: Quantization runtime" src="../assets/images/resid/6.jpg"></p>
+<p>Table 3 对比 ACS、Health &amp; Household、Beauty &amp; Personal Care 三个较大数据集上的量化阶段 wall-clock runtime。LETTER 在三个数据集上分别需要 3356.64、6537.30、7379.83 分钟；TIGER 分别需要 224.29、371.71、423.89 分钟；ReSID 只需要 27.38、71.89、95.96 分钟。论文总结为 LETTER 比 ReSID 慢 77x-122x，TIGER 大约慢 5x。这个效率收益来自两个方面：ReSID 的表征学习是轻量 FAMAE，而 Q-stage 的 GAOQ 是非参数化 balanced clustering 加 alignment，不需要大规模训练式 tokenizer；同时它避免了调用 Sentence-T5-xxl 这类 foundation model 为每个 item 抽取 embedding 的成本。</p>
+<p>需要谨慎的是，Table 3 只比较 quantization stage，不包含 representation learning。论文解释说 FAMAE 的成本接近 SASRec 这类轻量序列模型，而 prior SID pipelines 依赖的 foundation encoder 成本可能被 amortized 或未明确报告，因此难以公平计入。但对工程落地而言，这仍然是强信号：一个 tokenizer 如果每次重建都要数天甚至数周，就不适合频繁更新 item catalog；ReSID 至少把重建成本拉回到可日常迭代的区间。推荐系统中的 item 新增、类目调整、店铺变化都很频繁，SID tokenizer 的重建速度会直接影响部署节奏。</p>
+<h3 id="3-5-缩放趋势-sid-接口能否利用更大-backbone">3.5 缩放趋势：SID 接口能否利用更大 backbone</h3>
+<p><img alt="Figure 4: Scaling trend" src="../assets/images/resid/7.jpg"></p>
+<p>Figure 4 在 Baby Products 上比较不同 non-embedding backbone 参数规模下的 NDCG@10。ReSID 在各个规模点都高于 TIGER 和 SASRec，并且随参数增大整体呈更有利的提升趋势；最大规模点略有回落，论文推测可能来自低数据 regime 下的过拟合。这个实验的意义不在于得出一个严格 scaling law，而是说明 tokenizer 质量会影响 backbone 扩容的收益。如果 SID 本身语义不稳定或不适合自回归解码，增加 generator 参数也可能只是在学习更复杂的噪声 target；如果 SID 更稳定、更低 prefix uncertainty，额外 backbone capacity 才能更有效地转化为排序质量。</p>
+<p>这点对推荐系统很实际。很多团队在生成式推荐上会优先考虑换更大的 encoder-decoder 或引入 LLM backbone，但如果 item code 本身不对齐，扩模收益可能很快饱和。ReSID 提供的启发是：在扩 generator 之前，应先审计 SID token 的语义一致性、前缀分支熵和单 code 信息量。一个更小但 tokenizer 对齐的生成模型，可能胜过一个更大但 target distribution 混乱的模型。Figure 4 和 Table 3 放在一起看，也形成了“更快 tokenizer + 更好扩容接口”的组合证据。</p>
+<h3 id="3-6-表示分析-famae-同时保留语义和协同结构">3.6 表示分析：FAMAE 同时保留语义和协同结构</h3>
+<p><img alt="Figure 5: Representation analysis" src="../assets/images/resid/8.jpg"></p>
+<p>Figure 5 用 t-SNE 比较 FAMAE、BERT4Rec 和 Sentence-T5 的 item embeddings。左侧按一级类目颜色显示 semantic category structure，右侧按 item-item co-occurrence graph 的 Louvain community 显示 behavioral community structure。FAMAE 的优势在于两边都相对有结构：在类目视角下，它能形成较清晰的 semantic clusters；在行为社区视角下，它也能把同一交互社区的 item 聚在一起。Sentence-T5 更偏语义聚类，但行为社区散得更开；BERT4Rec 更偏协同结构，但类目分离较弱。这正好对应论文对 FAMAE 的定位：不是让语义和协同互相竞争，而是用结构化字段的互预测把必要语义作为协同推荐的辅助约束。</p>
+<p>这张图也解释了为什么 FAMAE 表示比 SASRec/BERT4Rec 表示更适合后续量化。序列模型为了预测 next item，可以学到强协同关系，但如果字段空间无结构，量化器在压缩时可能无法稳定地区分 item semantic direction；Sentence-T5 之类文本 embedding 有语义结构，但不一定知道哪些 item 在用户行为上相互替代、互补或连续出现。FAMAE 借助目标位置字段掩码，把用户历史聚合和字段预测绑定在一起，使 item-ID embedding 和 category embedding 在同一空间中对齐。对 SID 来说，这种双重结构比单一语义或单一协同更稳，因为离散码既要被下游生成器预测，也要能映射回具有合理语义和行为邻域的 item。</p>
+<h3 id="3-7-gaoq-歧义证据和完整实验链条">3.7 GAOQ 歧义证据和完整实验链条</h3>
+<p><img alt="Table 10: GAOQ ambiguity evidence" src="../assets/images/resid/10.jpg"></p>
+<p>Table 10 量化了 GAOQ 对 indexing ambiguity 的影响。它统计在第二层共享同一 code 的 item，其 centered embedding directions 的平均 pairwise cosine similarity。GAOQ 在 Musical Instruments、Video Games、Baby Products、Beauty &amp; Personal Care 上分别为 0.0463、0.0567、0.0570、0.0524；Hierarchical K-Means 则只有 0.0172、0.0154、0.0086、0.0053。论文文本里说 Hierarchical K-Means 的值低 3-10 倍，意味着同一个 code 下的方向更分散，也就是同一 index 的语义解释更依赖 prefix。GAOQ 值更高，说明全局 anchor matching 让同一 code 聚到更一致的 residual direction，降低了 <span class="math-inline">$I(\mathbf{z};C_{(&lt;l)}\mid c_l)$</span> 所代表的前缀依赖歧义。</p>
+<p>完整实验链条比较扎实：Table 1 证明主结果，Table 2 证明 FAMAE 和 GAOQ 都必要，Figure 3 证明 E-stage metric 可预测下游表现，Table 3 证明 tokenizer 成本明显下降，Figure 4 说明 backbone 扩模收益更好，Figure 5 和 Table 10 分别从表示和量化两端解释为什么有效。附录还有完整主结果宽表、完整消融表、数据集统计、branching factor、branching sensitivity、UMAP 分布、attention heatmap、SID overlap ratio 和 FLOPs 分析。虽然论文没有线上 A/B，也不是工业系统 paper，但它在离线公平性和机制解释上比很多 SID 工作更完整。</p>
+<p>需要保留的限制也很清楚。第一，所有实验都在 Amazon-2023 子集上，结构化字段主要是 store ID 与类目层级；如果业务中的 side-info 更稀疏、噪声更大或强依赖文本/图像，FAMAE 的字段预测目标需要重新设计。第二，ReSID 虽然不依赖 LLM，但仍然需要高质量结构化特征。对内容平台、短视频或资讯推荐，文本/视觉理解可能不能完全被现有字段替代，直接排除 foundation model 未必合适。第三，GAOQ 的 branching factors、anchor 数和 balanced K-Means 实现会影响结果，论文提供了超参表，但不同 catalog size 下仍需重新搜索。第四，ReSID 评估的是离线 next-item recommendation，真正上线还要检查 candidate mapping、beam search invalid code、冷启动 item 更新、长尾曝光和延迟等链路指标。</p>
+<h2 id="4-总结">4. 总结</h2>
+<h3 id="4-1-我的判断">4.1 我的判断</h3>
+<p>ReSID 的价值不在于发明一个更复杂的 tokenizer 名字，而在于把 SID-based generative recommendation 的问题重新放回推荐系统本身。过去很多路线默认“语义 embedding + 通用量化 + 生成模型”就足够，但这篇论文指出，推荐里的 item code 既是信息压缩结果，也是生成器的监督目标；如果上游表征和量化没有对齐协同预测与顺序可预测性，下游模型只是在努力拟合一个不合适的 token 序列。FAMAE 解决表征学习的充分性，GAOQ 解决量化索引的一致性，两者合起来构成了比纯 LLM embedding 更推荐原生的 SID pipeline。</p>
+<p>我认为最值得借鉴的是两个审计视角。第一个是 E-stage 审计：不要只看 embedding reconstruction 或文本相似度，要同时看 full-field masking 下的协同预测能力和 single-field masking 下的 item-ID/字段辨别能力。第二个是 Q-stage 审计：不要只看 quantization loss，要看每层 code 的边际使用、prefix-conditional uncertainty、同一 index 跨 prefix 的语义方向是否一致。很多生成式推荐失败，可能并不是 generator 不够强，而是 tokenizer 已经把行为结构打散了。</p>
+<h3 id="4-2-工程启发与复现建议">4.2 工程启发与复现建议</h3>
+<p>如果要在本地系统复现，第一步应先构造结构化字段版本的 item representation 数据，而不是直接套文本 embedding。字段至少应覆盖 item-ID、类目层级、作者/店铺/来源、内容属性和可稳定更新的行为统计；字段缺失率、更新频率和线上可用性需要提前审计。第二步训练 FAMAE 时，应保存 Metric 1/2 的 checkpoint 曲线，并在进入 GAOQ 前设质量门槛。第三步实现 GAOQ 时，要单独验证每层 balanced code usage、anchor matching 后同一 code 的方向一致性，以及 SID 与用户历史 item 的 overlap ratio。第四步才是训练统一 T5-style generator，并与 item-ID baseline、side-info augmented baseline、TIGER/RQ-VAE baseline 做公平比较。</p>
+<p>上线前还需要额外保护。生成式 SID 系统可能生成无效 code，必须有 prefix constraint 或 code-to-item mapping 检查；GAOQ 的层级 code 也要支持 item 增量更新，否则 catalog 高频变化会造成重建压力。对业务指标，建议至少分 head/body/tail item、老 item/新 item、不同类目和不同用户活跃度做分桶。ReSID 强调推荐原生表征，但不代表语义模型完全没用；在冷启动内容理解很强的场景，可以考虑把 foundation model 输出作为结构化字段之一，而不是让它单独主导 tokenizer 空间。</p>
+<h3 id="4-3-局限与后续跟进">4.3 局限与后续跟进</h3>
+<p>这篇论文的主要局限有四点。第一，实验集中在 Amazon-2023，公开数据虽多达十个子集，但和工业推荐的曝光偏差、在线反馈和多目标排序仍有差距。第二，FAMAE 依赖结构化字段充分性假设，若业务字段无法覆盖文本/视觉语义或存在大量脏字段，推荐原生 embedding 可能并不自然优于 foundation embedding。第三，GAOQ 引入 balanced K-Means、orthogonal anchors 和 Hungarian matching，虽然比训练式 tokenizer 快，但实现复杂度高于普通 RQ-KMeans。第四，论文没有报告线上 A/B、服务延迟、增量更新和无效 SID 生成比例，这些都是生成式推荐落地时绕不开的问题。</p>
+<p>后续我会重点跟踪三件事。第一，看官方实现是否补齐完整训练脚本、数据预处理细节和 GAOQ 超参搜索策略。第二，把 ReSID 与 TIGER、LETTER、EAGER、UNGER、ETEGRec、VarLenRec、CAPSID 等 SID 工作放在同一张方法表里，比较它们在表征来源、量化目标、code 长度、prefix constraint 和工程成本上的差异。第三，如果做内部实验，优先从 tokenizer offline audit 开始，而不是直接接线上召回；只有当 E-stage metric、GAOQ ambiguity、Recall/NDCG、无效 code 和延迟都稳定后，再考虑 shadow traffic 或小流量实验。总的来说，ReSID 是一篇适合推荐系统工程团队精读的生成式推荐 tokenizer 论文，它把“怎样给 item 编 token”从预处理问题提升成了推荐目标对齐问题。</p>
+        </article>
+        <aside class="side-notes" aria-label="侧边摘要">
+          <div class="note-block">
+            <strong>阅读说明</strong>
+            <p>正文由本地 Markdown 笔记转换，保留公式、图表位置、实验表和工程复现边界。</p>
+          </div>
+          <div class="note-block side-links">
+            <strong>章节跳转</strong>
+            <a href="#1-背景和问题">1. 背景和问题</a><a href="#2-方法">2. 方法</a><a href="#3-实验结果">3. 实验结果</a><a href="#4-总结">4. 总结</a>
+          </div>
+          <div class="note-block">
+            <strong>相关入口</strong>
+            <p><a href="../papers.html">返回论文库</a></p>
+          </div>
+        </aside>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="page-shell">
+        <span>© 2026 liuzhao09. Paper note.</span>
+        <a class="text-link" href="../papers.html">返回论文库</a>
+      </div>
+    </footer>
+  </body>
+</html>
