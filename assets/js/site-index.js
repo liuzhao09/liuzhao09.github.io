@@ -187,7 +187,7 @@
   };
 
   const syncLibrary = () => {
-    const libraryPapers = [...document.querySelectorAll(".library-paper")];
+    const libraryPapers = [...document.querySelectorAll("#paper-list .library-paper")];
     if (!libraryPapers.length) return;
 
     const count = libraryPapers.length;
