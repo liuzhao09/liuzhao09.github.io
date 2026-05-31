@@ -94,6 +94,7 @@
     "./papers/tiger.html": "2026-05-19",
     "./papers/marm.html": "2026-05-19",
     "./papers/llm2rec.html": "2026-05-19",
+    "./papers/perpeft.html": "2026-05-31",
   });
 
   const newsDates = Object.freeze({
