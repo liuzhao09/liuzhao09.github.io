@@ -99,6 +99,7 @@
   });
 
   const newsDates = Object.freeze({
+    "./news/2026-06-01.html": "2026-06-01",
     "./news/2026-05-30.html": "2026-05-30",
     "./news/2026-05-29.html": "2026-05-29",
     "./news/2026-05-28.html": "2026-05-28",
@@ -107,6 +108,7 @@
   });
 
   const marketDates = Object.freeze({
+    "./market/2026-06-01.html": "2026-06-01",
     "./market/2026-05-29.html": "2026-05-29",
     "./market/2026-05-28.html": "2026-05-28",
     "./market/2026-05-27.html": "2026-05-27",
