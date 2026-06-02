@@ -178,6 +178,22 @@
   const formatDate = (date) => date.replaceAll("-", ".");
   const formatMonth = (date) => date.slice(0, 7).replace("-", ".");
   const latestDate = (nodes) => nodes.map(dateForNode).filter(Boolean).sort().at(-1) || "";
+  const ensureNoteDate = (node, date) => {
+    if (!date) return;
+
+    const main = node.querySelector(".library-main");
+    if (!main) return;
+
+    let dateNode = main.querySelector(".library-note-date");
+    if (!dateNode) {
+      dateNode = document.createElement("time");
+      dateNode.className = "library-note-date";
+      main.prepend(dateNode);
+    }
+
+    dateNode.dateTime = date;
+    dateNode.textContent = `记录：${formatDate(date)}`;
+  };
 
   const syncHome = () => {
     const recentItems = [...document.querySelectorAll(".recent-item")];
@@ -228,6 +244,8 @@
     const latest = latestDate(libraryPapers);
     const searchInput = document.querySelector("#paper-search");
     const resultCount = document.querySelector("#result-count");
+
+    libraryPapers.forEach((paper) => ensureNoteDate(paper, dateForNode(paper)));
 
     setText("#library-note-count", String(count));
     if (latest) setText("#library-latest", latest);
