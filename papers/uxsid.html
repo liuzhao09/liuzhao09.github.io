@@ -75,91 +75,93 @@
 <p>从输入输出看，UxSID 接收的是用户超长行为序列 <span class="math-inline">$\mathcal{B}=[b_1,b_2,\dots,b_L]$</span>、目标 item 的 SID <span class="math-inline">$c_{target}$</span> 以及用户、上下文、短期行为等排序特征。离线阶段输出 target-aware 的 <span class="math-inline">$\mathbf{E}^{UxSID}$</span>，在线阶段这个向量作为额外用户历史特征进入 ranking model。与 search-based 方法相比，在线模型不再对每个候选执行 Top-K search；与 item-agnostic compression 相比，缓存的 embedding 不再只有 user 维度，而是与 <span class="math-inline">$UID$</span> 和 <span class="math-inline">$SID$</span> 共同绑定。</p>
 <h3 id="2-2">2.2 SIDs 生成：MLLM 表征与残差量化</h3>
 <p>SIDs 的生成过程先把 item 属性编码到连续语义空间。论文写成：</p>
-<div class="math-display">$
+<div class="math-display">$$
 \mathbf{z}_i = \text{Enc}_{\text{MLLM}}(\text{Attributes}_i)
-$</div>
+$$</div>
 <p>符号解释：<span class="math-inline">$i$</span> 表示候选或历史 item，<span class="math-inline">$\text{Attributes}_i$</span> 是该 item 的多模态属性集合，<span class="math-inline">$\text{Enc}_{\text{MLLM}}$</span> 是多模态编码器，<span class="math-inline">$\mathbf{z}_i \in \mathbb{R}^d$</span> 是连续语义向量。用 MLLM encoder 的目的是让 item 表征不只来自点击共现，而是带有内容理解和业务语义。随后，论文使用 Res-KmeansFSQ hybrid quantization，把连续向量分解成 <span class="math-inline">$M$</span> 个层级 codebook 上的离散码：</p>
-<div class="math-display">$
+<div class="math-display">$$
 \mathbf{z}_i \approx \sum_{m=1}^{M}\mathcal{C}_m(k_m), \quad
 k_m=\arg\min_j \|\mathbf{r}_{m-1}-\mathbf{c}_{m,j}\|_2
-$</div>
+$$</div>
 <p>符号解释：<span class="math-inline">$M$</span> 是量化层数，<span class="math-inline">$\mathcal{C}_m$</span> 是第 <span class="math-inline">$m$</span> 层 codebook，<span class="math-inline">$k_m$</span> 是第 <span class="math-inline">$m$</span> 层选中的离散码，<span class="math-inline">$\mathbf{c}_{m,j}$</span> 是第 <span class="math-inline">$j$</span> 个 codeword，<span class="math-inline">$\mathbf{r}_m=\mathbf{z}_i-\sum_{l=1}^{m}\mathcal{C}_l(k_l)$</span> 是量化残差。这个公式的直觉是逐层解释 item 的语义残差：第一层编码粗语义簇，后续层补充更细粒度差异。论文在工业部署中主要使用第一层 code <span class="math-inline">$k_1$</span> 作为 target SIDs，也就是 <span class="math-inline">$c_{target}$</span>。这不是说更深层编码没有价值，而是第一层在语义粒度、活跃 SID 数量、缓存规模和延迟之间更容易平衡。</p>
 <p>这一设计有两个工程含义。第一，SIDs 的训练和更新不是 UxSID 排序模型内部的临时 embedding lookup，而是一个可复用的 item tokenization 基础设施。附录提到它沿用了 QARM V2 和 OneRec-v2 的 codebook 架构，第一层 codebook size 为 4096，embedding lookup dimension 为 32。第二，UxSID 的上限被 SIDs 质量约束。如果 SIDs 过粗，就会退化成 category tag；如果过细，每个用户活跃 SID 数量和缓存 key 数量会上升，semantic-specific 共享优势会被削弱。</p>
 <h3 id="2-3">2.3 IAIC：从原始行为到 K 个 item-agnostic interest anchors</h3>
 <p>IAIC 的目标是先把原始行为序列压成 <span class="math-inline">$K$</span> 个兴趣锚点 <span class="math-inline">$\mathbf{P}\in\mathbb{R}^{K\times d}$</span>，其中 <span class="math-inline">$K\ll L$</span>。这一步暂时不使用目标 SID，而是构造一个结构化、可被后续 semantic probe 查询的兴趣池。给定用户历史行为 embedding 矩阵 <span class="math-inline">$\mathbf{E}=[\mathbf{e}_1,\dots,\mathbf{e}_L]\in\mathbb{R}^{L\times d}$</span>，论文定义一组可学习 anchor queries <span class="math-inline">$\mathbf{Q}_{anc}\in\mathbb{R}^{K\times d}$</span>，用 cross-attention 汇聚长序列：</p>
-<div class="math-display">$
+<div class="math-display">$$
 \mathbf{H}=\text{Softmax}\left(\frac{(\mathbf{Q}_{anc}\mathbf{W}^Q)(\mathbf{E}\mathbf{W}^K)^\top}{\sqrt d}\right)(\mathbf{E}\mathbf{W}^V)
-$</div>
+$$</div>
 <p>符号解释：<span class="math-inline">$\mathbf{Q}_{anc}$</span> 是 <span class="math-inline">$K$</span> 个可学习兴趣 query，<span class="math-inline">$\mathbf{E}$</span> 是长度为 <span class="math-inline">$L$</span> 的行为 embedding 矩阵，<span class="math-inline">$\mathbf{W}^Q,\mathbf{W}^K,\mathbf{W}^V$</span> 是 attention 投影矩阵，<span class="math-inline">$\mathbf{H}=[\mathbf{h}_1,\dots,\mathbf{h}_K]^\top$</span> 是初步压缩兴趣。这个公式和普通 attention 很像，但 query 不是候选 item，而是 <span class="math-inline">$K$</span> 个 learnable interest anchors。它的作用类似“让模型自己学会用 <span class="math-inline">$K$</span> 个槽位覆盖用户长期行为的不同区域”。如果用户历史里同时有游戏、服饰、零食、旅游等多种兴趣，理想情况下不同 anchor 会分别吸收不同兴趣峰，而不是都盯着最近或最频繁行为。</p>
 <p>为了让每个 anchor 拥有更独立的变换能力，论文又对每个 <span class="math-inline">$\mathbf{h}_k$</span> 使用 Per-token Feed-Forward Networks：</p>
-<div class="math-display">$
+<div class="math-display">$$
 \mathbf{p}_k=\text{LayerNorm}\left(
 \mathbf{h}_k+
 \sigma(\mathbf{h}_k\mathbf{W}_1^{(k)}+\mathbf{b}_1^{(k)})
 \mathbf{W}_2^{(k)}+\mathbf{b}_2^{(k)}
 \right)
-$</div>
+$$</div>
 <p>符号解释：<span class="math-inline">$\mathbf{p}_k$</span> 是第 <span class="math-inline">$k$</span> 个最终兴趣锚点，<span class="math-inline">$\sigma$</span> 是 sigmoid，<span class="math-inline">$\mathbf{W}_1^{(k)},\mathbf{W}_2^{(k)},\mathbf{b}_1^{(k)},\mathbf{b}_2^{(k)}$</span> 是第 <span class="math-inline">$k$</span> 个 anchor 专属参数，LayerNorm 负责稳定残差输出。也就是说，IAIC 不只是把 <span class="math-inline">$K$</span> 个 anchor 当成 attention 输出后的 <span class="math-inline">$K$</span> 行向量，还给每个 anchor 独立的非线性子空间。这样的好处是不同 anchor 可以学习不同兴趣模式；代价是参数量和训练稳定性会更依赖 <span class="math-inline">$K$</span> 的选择。论文实验里最终取 <span class="math-inline">$K=16$</span>，并在参数分析里说明 <span class="math-inline">$K=4$</span> 容量不足，过大的 <span class="math-inline">$K=32$</span> 又可能带来冗余和噪声。</p>
 <h3 id="2-4">2.4 正交约束：防止兴趣锚点塌缩</h3>
 <p>只用 learnable anchors 做压缩有一个常见风险：多个 anchor 可能学到相似的高频兴趣，导致 <span class="math-inline">$K$</span> 个槽位名义上很多，实际上只覆盖同一类模式。UxSID 用 normalized orthogonality loss 限制这种塌缩：</p>
-<div class="math-display">$
+<div class="math-display">$$
 \mathcal{L}_{ortho}=
 \left\|
 \frac{\mathbf{P}\mathbf{P}^T}{\|\mathbf{P}\|_2^2}
 -\mathbf{I}
 \right\|_F
-$</div>
+$$</div>
 <p>符号解释：<span class="math-inline">$\mathbf{P}$</span> 是所有兴趣锚点组成的矩阵，<span class="math-inline">$\mathbf{P}\mathbf{P}^T$</span> 描述锚点两两相似度，<span class="math-inline">$\|\mathbf{P}\|_2^2$</span> 做尺度归一化，<span class="math-inline">$\mathbf{I}$</span> 是单位矩阵，<span class="math-inline">$\|\cdot\|_F$</span> 是 Frobenius norm。<span class="math-inline">$\mathbf{P}\mathbf{P}^T$</span> 描述 anchor 两两相似度，除以 <span class="math-inline">$\|\mathbf{P}\|_2^2$</span> 是为了让约束对尺度更稳定。这个损失希望非对角项尽量小，对角项接近 1，使不同 interest anchors 更独立。</p>
 <p>从推荐建模角度看，正交约束的价值不在数学形式本身，而在它让“长期兴趣多峰性”变成可优化对象。用户的历史不是一个单峰分布，尤其在 10k 行为下，最近兴趣、周期性兴趣、低频高价值兴趣、广告转化兴趣可能同时存在。没有多样性约束，压缩模块容易追逐平均收益最高或曝光最多的兴趣；有正交约束后，模型至少被鼓励把压缩容量分配到不同方向。消融表显示去掉 <span class="math-inline">$\mathcal{L}_{ortho}$</span> 后指标下降，说明这个约束确实在 UxSID 中承担了防塌缩作用。</p>
 <h3 id="2-5">2.5 Hierarchical Semantic Probing：global attention、gate 与 local anchors</h3>
 <p>IAIC 产出的 <span class="math-inline">$\mathbf{P}$</span> 仍然是 item-agnostic 的。UxSID 真正变成 semantic-specific 的地方，是 Hierarchical Semantic Probing。第一阶段是 explicit semantic probing，用目标 SID 直接查询原始行为序列：</p>
-<div class="math-display">$
+<div class="math-display">$$
 \mathbf{e}_{global}=
 \text{Softmax}\left(
 \frac{(c_{target}\mathbf{W}_g^Q)(\mathbf{E}\mathbf{W}_g^K)^\top}{\sqrt d}
 \right)(\mathbf{E}\mathbf{W}_g^V)
-$</div>
+$$</div>
 <p>符号解释：<span class="math-inline">$c_{target}$</span> 是目标 item 的第一层 SID embedding，<span class="math-inline">$\mathbf{W}_g^Q,\mathbf{W}_g^K,\mathbf{W}_g^V$</span> 是 global attention 投影矩阵，<span class="math-inline">$\mathbf{e}_{global}$</span> 是目标语义对完整历史的响应。它像一个轻量版“目标语义扫描器”：不是把所有历史压缩后再看目标，而是先让 <span class="math-inline">$c_{target}$</span> 到原始行为里找相关位置。这能弥补纯 compression 容易丢掉高频以外细节的问题。消融中去掉 <span class="math-inline">$\mathbf{e}_{global}$</span> 会带来明显下降，说明原始历史上的显式目标语义对齐不是可有可无。</p>
 <p>第二阶段先用 global response 生成 gate：</p>
-<div class="math-display">$
+<div class="math-display">$$
 \mathbf{g}_{ctx}=\sigma(\text{GatedNet}(\mathbf{e}_{global}))
-$</div>
+$$</div>
 <p>再用 gate 调制目标 SID：</p>
-<div class="math-display">$
+<div class="math-display">$$
 \mathbf{q}_{ref}=c_{target}\odot \mathbf{g}_{ctx}
-$</div>
+$$</div>
 <p>符号解释：<span class="math-inline">$\mathbf{g}_{ctx}$</span> 是由 global response 生成的上下文门控向量，<span class="math-inline">$\sigma$</span> 限制门控取值，<span class="math-inline">$\odot$</span> 是 Hadamard product，<span class="math-inline">$\mathbf{q}_{ref}$</span> 是用户上下文调制后的目标语义 query。直觉上，<span class="math-inline">$c_{target}$</span> 描述目标 item 所属语义簇，但同一个目标语义对不同用户不应以完全相同方式查询压缩兴趣。<span class="math-inline">$\mathbf{e}_{global}$</span> 已经看过用户原始历史，因此 gate 可以把目标 SID 调整成更符合该用户上下文的 refined query。比如同属“服饰”的 SID，对于一个长期看运动内容的用户和一个长期看商务穿搭的用户，应该激活不同潜在兴趣维度。</p>
 <p>最后，refined query 到 IAIC anchors 上做 local attention：</p>
-<div class="math-display">$
+<div class="math-display">$$
 \mathbf{e}_{local}=
 \text{Softmax}\left(
 \frac{(\mathbf{q}_{ref}\mathbf{W}_l^Q)(\mathbf{P}\mathbf{W}_l^K)^\top}{\sqrt d}
 \right)(\mathbf{P}\mathbf{W}_l^V)
-$</div>
+$$</div>
 <p>符号解释：<span class="math-inline">$\mathbf{W}_l^Q,\mathbf{W}_l^K,\mathbf{W}_l^V$</span> 是 local attention 投影矩阵，<span class="math-inline">$\mathbf{P}$</span> 是 IAIC 压缩兴趣池，<span class="math-inline">$\mathbf{e}_{local}$</span> 是 refined query 在压缩空间中抽取的局部兴趣。</p>
 <p>最终表示为：</p>
-<p>$ \mathbf{E}^{UxSID}=[\mathbf{e}_{global};\mathbf{e}_{local}] $</p>
+<div class="math-display">$$
+\mathbf{E}^{UxSID}=[\mathbf{e}_{global};\mathbf{e}_{local}]
+$$</div>
 <p>符号解释：分号表示向量拼接，<span class="math-inline">$\mathbf{E}^{UxSID}$</span> 同时保留原始历史上的语义响应和压缩兴趣空间中的去噪响应。</p>
 <p>这个两级结构的强点在于分工清楚。<span class="math-inline">$\mathbf{e}_{global}$</span> 负责不丢失目标相关的原始行为信号，尤其是长尾或远距离行为；<span class="math-inline">$\mathbf{e}_{local}$</span> 负责在压缩兴趣池中去噪和概括，让在线服务不需要面对完整长序列。gate 则把两者连接起来，避免 local query 只是裸 SID。消融中去掉 <span class="math-inline">$\mathbf{e}_{local}$</span>、去掉 gate 都会下降，说明论文不是只靠 SID 直接 attention 或只靠 anchor compression，而是靠这条“原始历史响应 -&gt; 上下文门控 -&gt; 压缩兴趣查询”的链路。</p>
 <h3 id="2-6">2.6 训练目标与生产部署</h3>
 <p>训练时，UxSID 的输出与目标特征、用户画像、上下文和短期行为一起进入排序 MLP：</p>
-<div class="math-display">$
+<div class="math-display">$$
 p(x)=\sigma\left(
 \text{MLP}(\mathbf{E}^t;\mathbf{E}^u;\mathbf{E}^c;\mathbf{E}^{short};\mathbf{E}^{UxSID}\mid x)
 \right)
-$</div>
+$$</div>
 <p>主任务使用二分类交叉熵，并加入正交约束：</p>
-<div class="math-display">$
+<div class="math-display">$$
 \mathcal{L}=
 -\frac{1}{N}\sum_{n=1}^{N}
 [y_n\log(p(x_n))+(1-y_n)\log(1-p(x_n))]
 +\lambda\mathcal{L}_{ortho}
-$</div>
+$$</div>
 <p>符号解释：<span class="math-inline">$\mathbf{E}^t$</span>、<span class="math-inline">$\mathbf{E}^u$</span>、<span class="math-inline">$\mathbf{E}^c$</span>、<span class="math-inline">$\mathbf{E}^{short}$</span> 分别是目标、用户、上下文和短期行为特征，<span class="math-inline">$p(x)$</span> 是样本 <span class="math-inline">$x$</span> 的预测概率，<span class="math-inline">$y_n$</span> 是二分类标签，<span class="math-inline">$N$</span> 是样本数，<span class="math-inline">$\lambda$</span> 是正交损失权重。这个损失说明 UxSID 没有另设复杂的对比学习或生成目标，而是端到端围绕推荐任务优化。<span class="math-inline">$\lambda$</span> 控制 anchor diversity 与主任务之间的权衡。参数分析显示 <span class="math-inline">$\lambda$</span> 过小多样性不足，过大又可能破坏 CTR/CTCVR 预测空间，因此它是一个需要根据业务数据调的正则强度。</p>
 <p>生产服务中，论文给出 key-value 形式：</p>
-<div class="math-display">$
+<div class="math-display">$$
 \text{Key}=\text{Hash}(UID\oplus SID), \quad \text{Value}=\mathbf{E}^{UxSID}
-$</div>
+$$</div>
 <p>符号解释：<span class="math-inline">$UID$</span> 是用户标识，<span class="math-inline">$SID$</span> 是目标语义标识，<span class="math-inline">$\oplus$</span> 表示拼接或组合后参与 hash，Value 是预计算的 <span class="math-inline">$\mathbf{E}^{UxSID}$</span>。在线请求到来时，系统根据用户和目标 SID 从 Embedding Server 点查 <span class="math-inline">$\mathbf{E}^{UxSID}$</span>，再把它作为 target-aware user history embedding 输入排序模型。理论上这把超长序列建模从在线序列计算变成了在线 KV lookup。关键代价转移到离线：需要周期性生成每个用户在活跃 SID 上的 UxSID embedding，并维护 embedding server 的存储与更新。</p>
 <p><img alt="Figure 6：UxSID 的离线生成、在线训练、Embedding Server 和实时推理链路。" src="../assets/images/uxsid/11.jpg" /></p>
 <p>部署图里黑色路径是离线 UxSID embedding generation，红色路径是在线模型训练和推理。长历史存储和训练数据存储持续喂给 model trainer，UxSID ranking model 定期产出 embedding，Embedding Server 随计划更新；在线请求则通过 backend、model inference service 和 online ranking model 获取 ranking scores。附录给出的工程数值很重要：在快手 4 亿活跃用户语境下，平均每用户约 100 个活跃 SIDs，总存储约 2.56 TB；1k 序列的 UxSID 离线训练需要 16 张 A10，10k 序列需要 40 张 A10；若直接把在线 ranking model 从 1k 扩到 10k，估算需要约 5300 张 A10，而 UxSID 增加的在线延迟约 +0.16 ms。这个对比解释了为什么论文愿意接受离线生成和存储开销：它换来的是在线推理成本与原始序列长度解耦。</p>
