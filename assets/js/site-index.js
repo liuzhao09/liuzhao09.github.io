@@ -1,5 +1,11 @@
 (() => {
   const noteDates = Object.freeze({
+    "./papers/onetrieval.html": "2026-06-15",
+    "./papers/helmsman.html": "2026-06-15",
+    "./papers/cfalr.html": "2026-06-15",
+    "./papers/cqc-rag.html": "2026-06-15",
+    "./papers/resum.html": "2026-06-15",
+    "./papers/proreviewer.html": "2026-06-15",
     "./papers/appo.html": "2026-06-12",
     "./papers/worldreasoner.html": "2026-06-12",
     "./papers/horma.html": "2026-06-12",
@@ -170,6 +176,7 @@
   });
 
   const marketDates = Object.freeze({
+    "./market/2026-06-12.html": "2026-06-12",
     "./market/2026-06-09.html": "2026-06-09",
     "./market/2026-06-08.html": "2026-06-08",
     "./market/2026-06-05.html": "2026-06-05",
