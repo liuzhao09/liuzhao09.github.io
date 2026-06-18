@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>UniPinRec 精读 | learning machine</title>
-  <meta name="description" content="UniPinRec 这篇论文的唯一论文入口是 arXiv:2606.00422，标题为 “UniPinRec: Unifying Generative Retrieval and Ranking at Pinterest Scale”。作者全部来自或曾在 Pinterest 参与该工作，论文把它定位为在 Pinterest 核心推荐场景中落地的检索与排序全栈统一系统。代码/项目页状态：本轮只核验 arXiv 页面和 PDF，没有核验到独">
+  <meta name="description" content="UniPinRec 这篇论文的唯一论文入口是 arXiv:2606.00422，标题为 UniPinRec: Unifying Generative Retrieval and Ranking at Pinterest Scale。">
   <link rel="stylesheet" href="../assets/css/site.css">
   <script>window.MathJax = { tex: { inlineMath: [['$', '$'], ['\\(', '\\)']], displayMath: [['$$', '$$'], ['\\[', '\\]']] }, svg: { fontCache: 'global' } };</script>
   <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
@@ -45,13 +45,13 @@
 </figure>
 <p>Figure 2 把方法主线画成两层：Data Layer 和 Model Layer。Data Layer 左侧是过去 engagement history，其中每个位置可以是 Pin、Action、Search Query、Board 或 No Action；右侧是 future feedview，包含 impression negatives。图中“20% randomly masked action”对应论文后续最优的 p_mask=0.2。Model Layer 中，过去历史和未来候选一起进入 GPT2 backbone，但使用自定义 mask 关闭 future positions 之间的 attention；上方 autoregressively predicted next embeddings 进入 pin decoder 和 sampled softmax，对应 retrieval；右侧 encoded embeddings 进入 action decoder 和 BCE，对应 ranking。图底部写明两个目标被 co-optimize：Next Pin Prediction 和 Action on the masked positions。这个图必须放在方法章，因为它不是问题动机图，而是解释 UniPinRec 如何在一个 forward pass 中同时保留召回和排序监督。</p>
 <h3 id="22-sampled-softmax-bce">2.2 联合目标：检索 sampled softmax 与排序 BCE</h3>
-<p>在 joint training 中，过去序列 Phi_1,...,Phi_n 保持与 retrieval 完全一致的长度和位置结构，因此仍然可以对每个未 mask 的过去位置施加 next-item prediction。论文公式 (3) 把 L_item 写成对历史位置上的 sampled-softmax loss 求平均，它继承 PinRec 的 retrieval objective。未来候选 Phi'_1,...,Phi'_k 被拼接在过去序列之后，完整序列一次通过 transformer；候选位置不能互相 attend，只能 attend 到过去历史。这一点让每个候选的 ranking score 不受同 batch 其他候选排列影响，同时把 attention 复杂度从 O((n+k)^2) 降成 O(n^2+n k)。</p>
+<p>在 joint training 中，过去序列 Phi_1,...,Phi_n 保持与 retrieval 完全一致的长度和位置结构，因此仍然可以对每个未 mask 的过去位置施加 next-item prediction。论文公式 (3) 把 L_item 写成对历史位置上的 sampled-softmax loss 求平均，它继承 PinRec 的 retrieval objective。未来候选 Phi&#x27;_1,...,Phi&#x27;_k 被拼接在过去序列之后，完整序列一次通过 transformer；候选位置不能互相 attend，只能 attend 到过去历史。这一点让每个候选的 ranking score 不受同 batch 其他候选排列影响，同时把 attention 复杂度从 O((n+k)^2) 降成 O(n^2+n k)。</p>
 <p>排序侧是公式 (4) 的 L_action。对每个 action type c 都有一个 MLP head h_psi^c 输出 scalar logit，再用 per-head weight w_c 平衡 save、click、hide 等行为的重要性。loss 由两部分组成：第一部分在被 mask 的过去位置 M_past 上预测历史 action，起到 denoising 和密集监督作用；第二部分在 k 个未来候选位置上预测候选 action 标签，正是 ranking 需要的 per-candidate action probability。最后公式 (5) 把总损失写成 L = L_item + L_action。这不是简单多任务拼接，因为 item embedder、input projector 和 transformer backbone 都同时从 retrieval 与 ranking 监督中更新；论文后续 Table 1 也证明，ranking-only 或先 retrieval 后 finetune 都不如 joint optimization。</p>
 <p>为了把上述几个目标放在同一个可复核框架里，方法章可以直接按论文原公式写成下面这个合成目标，而不是额外发明抽象指标：</p>
 <div class="math-display">$$
-L = L_{item} + L_{action},\quad L_{item}=\frac{1}{|H|}\sum_{t\in H} L_s(\hat{i}_{u,t}, i_{u,t+1}),\quad L_{action}=\sum_{c=1}^{C} w_c\left(\frac{1}{|M_{past}|}\sum_{i\in M_{past}}\ell_{BCE}(h_{\psi}^{c}(z_i), a_i^{(c)}) + \frac{1}{k}\sum_{j=1}^{k}\ell_{BCE}(h_{\psi}^{c}(z'_j), a'_j{}^{(c)})\right)
+L = L_{item} + L_{action},\quad L_{item}=\frac{1}{|H|}\sum_{t\in H} L_s(\hat{i}_{u,t}, i_{u,t+1}),\quad L_{action}=\sum_{c=1}^{C} w_c\left(\frac{1}{|M_{past}|}\sum_{i\in M_{past}}\ell_{BCE}(h_{\psi}^{c}(z_i), a_i^{(c)}) + \frac{1}{k}\sum_{j=1}^{k}\ell_{BCE}(h_{\psi}^{c}(z&#x27;_j), a_j&#x27;^{(c)})\right)
 $$</div>
-<p>符号解释：H 是用户过去行为序列中用于 next-item prediction 的位置集合；L_s 是 PinRec 继承下来的 sampled-softmax 检索损失；M_past 是历史中 action 被 mask 的位置集合；C 是 action type 数量；w_c 是每个 action head 的权重；h_psi^c 是第 c 个行为的 MLP head；z_i 是历史位置 hidden state，z'_j 是未来候选位置 hidden state；a_i^{(c)} 和 a_j'^{(c)} 分别是历史位置与候选位置上的二值行为标签；k 是 future feedview 里的候选数。这个公式在阅读上有两个作用：一是确认 UniPinRec 没有把排序目标放到第二阶段 fine-tune，而是在同一 forward 内和检索目标共同更新骨干；二是确认 ranking 的监督既来自过去被 mask 的 action，也来自未来 feedview 候选，因此它不是只在正反馈序列上学习 next item。</p>
+<p>符号解释：H 是用户过去行为序列中用于 next-item prediction 的位置集合；L_s 是 PinRec 继承下来的 sampled-softmax 检索损失；M_past 是历史中 action 被 mask 的位置集合；C 是 action type 数量；w_c 是每个 action head 的权重；h_psi^c 是第 c 个行为的 MLP head；z_i 是历史位置 hidden state，z&#x27;_j 是未来候选位置 hidden state；a_i^{(c)} 和 a_j&#x27;^{(c)} 分别是历史位置与候选位置上的二值行为标签；k 是 future feedview 里的候选数。这个公式在阅读上有两个作用：一是确认 UniPinRec 没有把排序目标放到第二阶段 fine-tune，而是在同一 forward 内和检索目标共同更新骨干；二是确认 ranking 的监督既来自过去被 mask 的 action，也来自未来 feedview 候选，因此它不是只在正反馈序列上学习 next item。</p>
 <p>从实现视角看，公式里的两个平均项也对应两种不同的数据密度。L_item 只关心历史序列中的下一 item，因此负样本主要来自 in-batch 和 random negatives；L_action 必须看到曝光候选的未互动样本，否则 save/click/hide head 会高估所有候选的正反馈概率。w_c 的存在说明多行为目标不能简单等权相加，因为 save、click、hide 在频率、业务价值和噪声上都不同。若一个平台要迁移 UniPinRec，最先要确认的不是 transformer 层数，而是能否稳定构造 M_past、future feedview slate、action vocabulary 和 per-head weights；这些字段缺任意一个，joint loss 就会退化为“检索模型旁边挂一个弱排序头”。</p>
 <p>这套目标设计的关键收益有三点。第一，不增加上下文长度。action 被拼接到 feature 维度，不变成新 token，因此不会像 interleaving 一样把 long user history 的 self-attention 成本翻倍。第二，权重可以从 retrieval checkpoint 初始化。由于 past sequence 的 token 语义和位置结构仍然是 retrieval 输入，PinRec 学到的用户兴趣表征不会被输入格式切断。第三，随机 action masking 让模型学习在 action 缺失时依赖 item content 和历史上下文，线上候选 action 全未知时更匹配推理分布。MAM 在这里不是 BERT 式预训练技巧的直接搬运，而是为 retrieval/ranking 共用输入格式服务的工程约束解。</p>
 <h3 id="23-blended-training-examples">2.3 Blended training examples 与数据基础设施</h3>
@@ -75,16 +75,34 @@ $$</div>
 <p>Table 1 给出最直接的结论。TransActV2+DCNv2 的 Hit@3 是 0.088008；HSTU 是 0.097326，同时 Recall@10 为 0.76161；PinRec 只有 retrieval 能力，Recall@10 是 0.77486；PinRec finetuned 的 Hit@3 是 0.095869；UniPinRec w/o item loss 的 Hit@3 是 0.097345；完整 UniPinRec 的 Hit@3 达到 0.10096，Recall@10 达到 0.77659。作者据此认为，UniPinRec 对生产 ranker 有约 +14.7% ranking 提升，同时相对 PinRec 的 Recall@10 还有约 +0.2% 边际提升。这个表最重要的不是某个绝对值，而是两个对照：只做 ranking action loss 的版本不如加上 item loss 的完整版本，说明 retrieval objective 对 ranking 表示有正向正则；先用 PinRec 再 finetune ranking 也不如从一开始 joint training，说明冻结或半冻结 embedder 会限制 item representation 为 action prediction 适配。</p>
 <p>HSTU 对照也帮助界定 UniPinRec 的贡献。HSTU 在同等 context length budget 下不如 UniPinRec，原因并不只是模型名字不同，而是 interleaved paradigm 带来的输入和训练分裂仍然存在。UniPinRec 用 non-interleaved MAM 保持 retrieval input compatibility，因此可以用同一历史表示服务两个任务。对于工业部署，这个差异比离线 Hit@3 小数点更关键：如果 retrieval recall 下降，即使 ranking 提升也可能被候选池损失抵消；如果 ranker 提升但召回服务不能复用 KV，则线上总成本可能不可接受。Table 1 同时回答了这两类担忧。</p>
 <h3 id="32-rq2kv-cache-reuse">3.2 RQ2：KV-cache reuse 与服务效率</h3>
-<p>RQ2 关注的是统一模型有没有实际省算力。Table 2 在 NVIDIA L40S 上测单次 ranking forward，设定 B=8、n=992、k=656、L=12。baseline 是 bf16 / SDPA / torch.compile 的 prefill，latency 25.72ms，speedup 1.00x；仅换 flex attention 的 prefill 到 19.70ms，speedup 1.31x；fp8 prefill 约 18.9ms，speedup 1.36x。真正大的变化来自 decode path：bf16 SDPA compile decode 是 10.42ms，2.47x；bf16 flex compile decode 是 8.57ms，3.00x；fp8 flex graph decode 是 6.56ms，3.92x。这个表说明 KV-cache reuse 的贡献大于单纯 dtype 或 kernel 优化，因为它改变的是 ranking 是否重算历史 prefill。</p>
+<p>RQ2 关注的是统一模型有没有实际省算力。</p>
+<figure>
+<img alt="Table 2：ranking forward 延迟与 decode 加速" src="../assets/images/pinterest-unipinrec/5.jpg" />
+</figure>
+<p>Table 2 在 NVIDIA L40S 上测单次 ranking forward，设定 B=8、n=992、k=656、L=12。baseline 是 bf16 / SDPA / torch.compile 的 prefill，latency 25.72ms，speedup 1.00x；仅换 flex attention 的 prefill 到 19.70ms，speedup 1.31x；fp8 prefill 约 18.9ms，speedup 1.36x。真正大的变化来自 decode path：bf16 SDPA compile decode 是 10.42ms，2.47x；bf16 flex compile decode 是 8.57ms，3.00x；fp8 flex graph decode 是 6.56ms，3.92x。这个表说明 KV-cache reuse 的贡献大于单纯 dtype 或 kernel 优化，因为它改变的是 ranking 是否重算历史 prefill。</p>
+<figure>
+<img alt="Table 3：受控 GPU 条件下的 online serving 收益" src="../assets/images/pinterest-unipinrec/6.jpg" />
+</figure>
 <p>Table 3 把效率放进在线条件。在受控 GPU activity/budget 下，bf16 decode flex compile 相对 baseline e2e latency 降低 11.1%，QPS 提升 63.6%，也是线上 A/B 使用的配置；fp8 decode flex graph QPS 提升 109.1%，但 e2e latency 反而 +6.7%，因为为了满足 Transformer Engine flatten leading dimension 是 8 的倍数，需要等待和聚合更大 batch，尤其 autoregressive retrieval step 中 S=1 时更受限制。因此，论文没有把最快离线 forward path 直接上线，而是选择端到端 latency 更稳的 bf16 flex compile。这个判断体现了工业推荐服务常见现实：吞吐、延迟、GPU 利用率和业务峰值不可能只用一个 microbenchmark 排序。</p>
 <h3 id="33-ablationmask">3.3 Ablation：mask 比例与模型扩展</h3>
+<figure>
+<img alt="Table 4：MAM action masking ratio 消融" src="../assets/images/pinterest-unipinrec/7.jpg" />
+</figure>
 <p>MAM 的关键超参是 p_mask。Table 4 比较 0.0、0.1、0.2、0.3 四个值：不 mask 的 Hit@3 为 0.09923；0.1 到 0.10078；0.2 到 0.10096；0.3 轻微回落到 0.10075。作者解释为，任意 masking 都优于 no masking，说明 action prediction 的额外监督和 denoising regularization 有帮助；但过高 masking 会从历史中移除太多有效行为信号，因此 0.3 开始收益递减。这个消融支持 Figure 2 中 20% randomly masked action 的设计，不是任意设定。</p>
+<p>更细看这张表，它把“完全不 mask”作为关键反例：如果历史 action 全可见，模型容易依赖当前或近邻行为线索，无法充分学习 action 缺失时的候选判断；而 0.3 又开始下降，说明 UniPinRec 需要在 denoising 正则和历史信号保留之间折中。这个结论直接支撑线上候选位置 action 永远未知的推理设定。</p>
+<figure>
+<img alt="Figure 4：depth 与 sequence length 的 scaling 曲线" src="../assets/images/pinterest-unipinrec/8.jpg" />
+</figure>
 <p>Figure 4 研究 model scaling，横轴是 normalized relative FLOPs，纵轴是 Hit@3。作者分别改变 transformer depth (2,4,8,12,24; S=1024) 和 sequence length (256,512,1K,2K; L=12)。两个方向都持续提升，说明 unified model 尚未在容量上饱和；但成本性质不同：depth 近似线性增加计算，sequence length 会因 attention 带来更强的二次成本。论文据此提出 sequence compression 是后续方向，因为长上下文对用户兴趣建模有明显质量潜力，但服务成本更难压。这里的结论与 KV-cache reuse 形成闭环：如果历史越来越长，避免 ranking 重算历史就更有价值。</p>
 <h3 id="34-rq3-ab-engagement">3.4 RQ3：线上 A/B 是否转成真实 engagement</h3>
 <p>线上实验采用增量 rollout，而不是一次替换完整漏斗。Baseline 是 PinRec retrieval 直接返回 K(&lt;3000) candidates 给下游排序；UniPinRec 是 unified model 先 ANN overfetch L0，再用 ranking head 做 L1 action scoring，返回 top K refined candidates 给下游生产 ranker。作者特别说明，线上仍然把 refined candidates 送入基于 TransAct V2 的 downstream production ranker，以便刚性验证候选质量改进。这意味着离线 ranking lift 会被下游 ranker/blender 稀释；如果线上仍有显著 engagement lift，说明 L0+L1 的候选改写确实带来额外信息。</p>
-<p>Board More Ideas 场景中，UniPinRec 支持 Board 作为 Pins 和 search queries 之外的新序列模态。Table 5 显示，UniPinRec L0+L1 相对 PinRec baseline 带来 +0.95% BMI surface saves 和 +0.08% site-wide saves。对一个日活规模很大的核心 surface，+0.95% surface saves 已经是有意义的线上收益；site-wide saves 仍为正，则说明它不是只在局部 surface 内挪动 engagement。</p>
 <figure>
-<img alt="Table 6：notifications 线上 A/B 结果" src="../assets/images/pinterest-unipinrec/5.jpg" />
+<img alt="Table 5：Board More Ideas 线上 A/B 结果" src="../assets/images/pinterest-unipinrec/9.jpg" />
+</figure>
+<p>Board More Ideas 场景中，UniPinRec 支持 Board 作为 Pins 和 search queries 之外的新序列模态。Table 5 显示，UniPinRec L0+L1 相对 PinRec baseline 带来 +0.95% BMI surface saves 和 +0.08% site-wide saves。对一个日活规模很大的核心 surface，+0.95% surface saves 已经是有意义的线上收益；site-wide saves 仍为正，则说明它不是只在局部 surface 内挪动 engagement。</p>
+<p>Table 5 还说明 UniPinRec 的 L1 action scoring 不只是离线排序头：它被放在 PinRec L0 之后重新筛选 top K candidates，最终仍要经过下游生产 ranker，如果在这种被下游稀释的路径上仍能提高 BMI surface saves，就更像是候选质量改善，而不是单一打分函数的离线拟合收益。</p>
+<figure>
+<img alt="Table 6：notifications 线上 A/B 结果" src="../assets/images/pinterest-unipinrec/10.jpg" />
 </figure>
 <p>Table 6 是线上证据里更完整的一张表。UniPinRec 相对 PinRec baseline 在 push opens 上 +0.91%，在 dormant users 的 push opens 上 +1.72%，notification surface saves 上 +3.84%，email clicks 上 +0.30%，weekly active users 上 +0.09%。这张表值得细读：最大提升不是一般 push opens，而是 dormant-user push opens 和 notification surface saves，说明更好的候选排序对重新激活低频用户和提高通知落地后的保存行为更敏感。WAU +0.09% 看起来小，但作为平台级周活指标，它比单 surface engagement 更难被局部优化影响。该表也限制了外推边界：实验对象是 Pinterest notifications，指标按 unique-user basis 计量，不能直接推断到所有推荐/广告场景；但它证明 L0+L1 的统一服务不是只在离线 Hit@3 上好看。</p>
 <p>整体看，实验链条比较完整：Table 1 证明 joint training 的任务质量，Table 2/3 证明共享 KV cache 的成本意义，Table 4/Figure 4 解释 MAM 和容量扩展，Table 5/6 证明线上 engagement。仍需注意的是，论文没有开源数据、特征、完整服务配置和 downstream ranker 细节；因此外部复现只能验证机制合理性，很难复算 Pinterest 级线上收益。</p>
