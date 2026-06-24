@@ -9,33 +9,35 @@
 <p>我把 LLMAnnotatedRetrieval 放进今日精选，是因为它能提供一个可复用的诊断问题：当我们说模型能力提高时，究竟是输入数据更好、训练目标更合适、结构偏置更强、还是评测口径更接近真实任务。只有把这个问题回答清楚，论文才有继续复现和工程转化价值。</p>
 <p>进一步看，LLMAnnotatedRetrieval 也和近期论文形成互补。过去几天已有多篇论文关注生成式推荐、agent memory、RAG、长上下文和后训练。今天这篇的新增价值在于它把其中一个环节拆成可检查的实验对象，而不是只提出更大的模型或更复杂的提示。对知识库沉淀来说，这类论文有助于后续做横向对照。</p>
 <p>如果后续要复现，第一步不应直接追求作者的最高分，而应复现最小可观测链路：同一数据切分、同一模型规模、同一训练预算、同一评估脚本，先确认指标趋势是否一致。若最小链路都无法对齐，就不应把论文结论写进生产设计。</p>
+<p>补充阅读口径：这篇论文还需要放到近期推荐系统与大模型自动化趋势里理解。系统越依赖自动生成的标签、自动维护的记忆、自动执行的工具链或自动评估的 judge，就越容易在数据采样、状态更新和评估口径之间产生偏差。因此，本笔记把论文中的中间变量单独写出，目的是让后续复现可以先检查数据和状态，而不是只追逐最终分数。</p>
+<p>再补一层背景判断：如果后续要把这篇论文用于真实系统，最先要确认的不是模型名称，而是论文里的用户、物品、文档、记忆、梯度或评价对象能否映射到本地可记录字段。能映射，才有离线回放和 shadow evaluation 的入口；不能映射，就只能把它当作研究线索。</p>
 <h2 id="2-方法">2. 方法</h2>
 <h3 id="2-1-多通道召回分歧挖掘">2.1 多通道召回分歧挖掘</h3>
 <p>LLMAnnotatedRetrieval 的第一层方法是把任务重新拆成可控制的数据或状态单元。作者没有只把输入样本送进一个黑箱模型，而是强调 多通道召回分歧挖掘。这一步的输入是原始任务、用户行为、文档、候选商品或模型输出，输出是更适合训练或评估的结构化信号。<strong style="color:#2563eb">真正重要的是信号的来源、难度和噪声被显式记录，而不是简单增加样本量。</strong></p>
-<figure><img src="../assets/images/llm-annotated-dense-retrieval/1.jpg" alt="Figure 1：LLMAnnotatedRetrieval 方法框架"></figure>
+<figure><img alt="Figure 1：LLMAnnotatedRetrieval 方法框架" src="../assets/images/llm-annotated-dense-retrieval/1.jpg" /></figure>
 <p>Figure 1 在这篇笔记中用于承接 多通道召回分歧挖掘。阅读时要把它看成论文中间状态的可视化，而不是装饰截图：它帮助确认作者如何把原始任务、训练信号、候选对象或评估目标组织成可处理结构。对推荐系统而言，这类图通常对应用户历史、候选召回、item 表示、排序目标和反馈信号；对 LLM 系统而言，它通常对应数据配方、记忆模块、梯度观测、teacher 输出或 agent trajectory。只有这些对象被明确画出，后续实验结果才有解释入口。</p>
 <p>从系统角度看，这一层的作用是降低训练和评估之间的口径差异。推荐系统经常依赖点击日志，但点击会被位置、库存、价格、活动和历史曝光影响；大模型系统经常依赖教师输出或自动评分，但教师也有偏差。LLMAnnotatedRetrieval 把这些信号组织成可审计的中间对象后，后续模块才有可能解释收益来自哪里。</p>
 <h3 id="2-2-三模型级联-llm-标注与人工一致性校准">2.2 三模型级联 LLM 标注与人工一致性校准</h3>
-<p>第二层方法是 三模型级联 LLM 标注与人工一致性校准。这一步通常承担选择、路由、打分或课程安排的角色：它决定哪些样本进入训练，哪些候选进入比较，哪些中间状态被保留，哪些错误被视作需要修正的信号。**如果这一层没有清楚定义，最终分数即使提升，也很难知道是模型学到了任务结构，还是只记住了某种数据偏置。**</p>
+<p>第二层方法是 三模型级联 LLM 标注与人工一致性校准。这一步通常承担选择、路由、打分或课程安排的角色：它决定哪些样本进入训练，哪些候选进入比较，哪些中间状态被保留，哪些错误被视作需要修正的信号。<strong>如果这一层没有清楚定义，最终分数即使提升，也很难知道是模型学到了任务结构，还是只记住了某种数据偏置。</strong>
 <div class="math-display">\[
 S_i = \alpha Q_i + \beta D_i - \gamma C_i,\quad w_i = \frac{\exp(S_i/\tau)}{\sum_j \exp(S_j/\tau)}
 \]</div>
-<p>符号解释：<span class="math-inline">$Q_i$</span> 表示第 <span class="math-inline">$i$</span> 个样本或候选的质量信号，<span class="math-inline">$D_i$</span> 表示难度或信息量，<span class="math-inline">$C_i$</span> 表示成本、噪声或冲突风险，<span class="math-inline">$S_i$</span> 是综合选择分，<span class="math-inline">$w_i$</span> 是进入训练或评估时的权重，<span class="math-inline">$\alpha,\beta,\gamma,\tau$</span> 控制不同信号的权衡。这个公式是对论文机制的结构化表达，用来说明为什么 三模型级联 LLM 标注与人工一致性校准 不能只按一个指标排序。</p>
+符号解释：<span class="math-inline">$Q_i$</span> 表示第 <span class="math-inline">$i$</span> 个样本或候选的质量信号，<span class="math-inline">$D_i$</span> 表示难度或信息量，<span class="math-inline">$C_i$</span> 表示成本、噪声或冲突风险，<span class="math-inline">$S_i$</span> 是综合选择分，<span class="math-inline">$w_i$</span> 是进入训练或评估时的权重，<span class="math-inline">$\alpha,\beta,\gamma,\tau$</span> 控制不同信号的权衡。这个公式是对论文机制的结构化表达，用来说明为什么 三模型级联 LLM 标注与人工一致性校准 不能只按一个指标排序。</p>
 <h3 id="2-3-五难度层级的三阶段课程训练">2.3 五难度层级的三阶段课程训练</h3>
-<p>第三层方法是 五难度层级的三阶段课程训练。它把前两层产生的结构化信号接到模型训练、推理或评估中，并用实验检查收益是否稳定。对 LLMAnnotatedRetrieval 来说，关键不是“用了 LLM”或“用了推荐模型”，而是模型在什么阶段读取这些信号：训练前的数据构造、训练中的目标函数、推理时的路由，还是评估后的解释。<strong style="color:#c2410c">如果信号只在评估阶段使用，却被写成训练能力提升，就会高估方法的可迁移性。</strong></p>
+<p>第三层方法是 五难度层级的三阶段课程训练。它把前两层产生的结构化信号接到模型训练、推理或评估中，并用实验检查收益是否稳定。对 LLMAnnotatedRetrieval 来说，关键不是“用了 LLM”或“用了推荐模型”，而是模型在什么阶段读取这些信号：训练前的数据构造、训练中的目标函数、推理时的路由，还是评估后的解释。<strong style="color:#c2410c">如果信号只在评估阶段使用，却被写成训练能力提升，就会高估方法的可迁移性。</strong>
 <div class="math-display">\[
 L = L_{task} + \lambda L_{align} + \mu L_{explain}
 \]</div>
-<p>符号解释：<span class="math-inline">$L_{task}$</span> 是主任务损失或主评估目标，<span class="math-inline">$L_{align}$</span> 表示与语义偏好、记忆状态、梯度可靠性或标注一致性的对齐项，<span class="math-inline">$L_{explain}$</span> 表示解释、理由或可审计输出带来的约束，<span class="math-inline">$\lambda$</span> 与 <span class="math-inline">$\mu$</span> 控制辅助目标强度。这个表达帮助读者理解本文方法如何把任务效果、系统可解释性和工程可控性放在同一框架下。</p>
+符号解释：<span class="math-inline">$L_{task}$</span> 是主任务损失或主评估目标，<span class="math-inline">$L_{align}$</span> 表示与语义偏好、记忆状态、梯度可靠性或标注一致性的对齐项，<span class="math-inline">$L_{explain}$</span> 表示解释、理由或可审计输出带来的约束，<span class="math-inline">$\lambda$</span> 与 <span class="math-inline">$\mu$</span> 控制辅助目标强度。这个表达帮助读者理解本文方法如何把任务效果、系统可解释性和工程可控性放在同一框架下。</p>
 <p>方法部分最值得复现的不是整套系统，而是中间状态。对于 LLMAnnotatedRetrieval，我会优先检查样本分层、状态更新、评分理由、梯度位置或语义代理是否能独立导出；然后才检查最终榜单或平均准确率。这样做可以避免把一个复杂 pipeline 的收益全部归因于最后一个模型。</p>
 <h2 id="3-实验结果">3. 实验结果</h2>
 <p>240M+ 训练样本、30K 人工标注查询、Walmart 生产 sponsored search 和两周线上 A/B；报告 +5.1% NDCG@10、错误召回率下降和广告指标提升。 这些实验结果说明，作者没有只给出单一平均分，而是尝试从任务效果、可靠性、效率或解释性多个角度证明方法价值。不过，本轮没有重新运行训练脚本，也没有核验全部代码，因此报告中的数值只代表论文公开材料。</p>
-<figure><img src="../assets/images/llm-annotated-dense-retrieval/2.jpg" alt="Figure 2：LLMAnnotatedRetrieval 实验证据"></figure>
-<p>Figure 2 用于支撑 LLMAnnotatedRetrieval 的实验讨论。读这张图时我重点看三点：第一，它是否把论文主张拆成数据集、baseline、指标或消融维度；第二，它是否能解释方法为什么有效，而不是只展示一个平均分；第三，它是否暴露了成本、鲁棒性或失败样本。对推荐系统来说，这意味着要看长尾、冷启动、覆盖率、用户交互轮次和线上指标；对大模型来说，则要看模型规模、token/FLOPs、梯度位置、memory 命中和 judge rationale。该图在正文中承担证据锚点作用，帮助后续复现时回到论文自己的变量。</p>
-<figure><img src="../assets/images/llm-annotated-dense-retrieval/3.jpg" alt="Figure 3：LLMAnnotatedRetrieval 实验证据"></figure>
-<p>Figure 3 用于支撑 LLMAnnotatedRetrieval 的实验讨论。读这张图时我重点看三点：第一，它是否把论文主张拆成数据集、baseline、指标或消融维度；第二，它是否能解释方法为什么有效，而不是只展示一个平均分；第三，它是否暴露了成本、鲁棒性或失败样本。对推荐系统来说，这意味着要看长尾、冷启动、覆盖率、用户交互轮次和线上指标；对大模型来说，则要看模型规模、token/FLOPs、梯度位置、memory 命中和 judge rationale。该图在正文中承担证据锚点作用，帮助后续复现时回到论文自己的变量。</p>
-<figure><img src="../assets/images/llm-annotated-dense-retrieval/4.jpg" alt="Figure 4：LLMAnnotatedRetrieval 实验证据"></figure>
-<p>Figure 4 用于支撑 LLMAnnotatedRetrieval 的实验讨论。读这张图时我重点看三点：第一，它是否把论文主张拆成数据集、baseline、指标或消融维度；第二，它是否能解释方法为什么有效，而不是只展示一个平均分；第三，它是否暴露了成本、鲁棒性或失败样本。对推荐系统来说，这意味着要看长尾、冷启动、覆盖率、用户交互轮次和线上指标；对大模型来说，则要看模型规模、token/FLOPs、梯度位置、memory 命中和 judge rationale。该图在正文中承担证据锚点作用，帮助后续复现时回到论文自己的变量。</p>
+<figure><img alt="Table 1：训练数据构成" src="../assets/images/llm-annotated-dense-retrieval/2.jpg" /></figure>
+<p>Table 1 把训练数据拆成五类样本：Easy Positives、Hard Positives、Hard Negatives、Token-Similar Negatives 和 Random Negatives。它的重要性不在于单独列出 240M+ 这个规模，而在于把样本来源和课程阶段绑定起来：三通道一致样本进入 Stage 1，词法召回命中但 ANN 漏掉的 hard positive 进入更靠后的 Stage 2-3，token 相似负例则放到 Stage 3。这个表能直接解释为什么论文强调“LLM 标注 + 课程训练”是一个数据管线问题，而不是只换一个 dense retriever。复现时也应先检查本地系统是否能导出同样的样本类型、来源字段和阶段标签，否则即使照搬损失函数，也无法得到同等训练信号。</p>
+<figure><img alt="Table 2：整体离线评估结果" src="../assets/images/llm-annotated-dense-retrieval/3.jpg" /></figure>
+<p>Table 2 是离线主结果表，读法应该从三个对照层次展开。第一，Pre-trained base 到 Model V2 显示了已有生产训练对同一个 encoder 的基础增益；第二，Model V2 到 Model V3 才是本文数据构造、LLM 标注和课程训练共同带来的差异；第三，V3 vs. V2 一列给出 95% 置信区间，让 NDCG@10、Precision、Recall、MAP、MRR 等指标不只是单点数字。这里最值得关注的是收益并不集中在一个指标上：NDCG@10 从 0.878 到 0.923，Precision 从 0.526 到 0.624，Recall 从 0.676 到 0.801，说明模型既改善了排序质量，也改善了相关商品覆盖。迁移到其他广告或推荐系统时，不能只看 NDCG，还要同步检查 precision/recall 的取舍是否符合业务约束。</p>
+<figure><img alt="Table 4：按 query 频段拆分的效果" src="../assets/images/llm-annotated-dense-retrieval/4.jpg" /></figure>
+<p>Table 4 把同一套离线结果拆到 Head、Torso、Tail 三个 query 频段。这个拆分比整体均值更能说明方法解决的问题：Head 查询本来数据充足，NDCG@10 仍从 0.913 提到 0.959；Torso 是样本量最大的主体部分，从 0.893 到 0.934；Tail 查询最容易受点击稀疏和词汇错配影响，NDCG@10 从 0.830 到 0.886，平均相关性也从 2.239 到 2.536。也就是说，LLM 标注和多通道样本挖掘不只是提高热门查询的排序精度，还在低频查询上补了原点击监督缺失的语义信号。工程落地时，这张表对应的监控项应该是分频段指标，而不是只看全站平均 NDCG。</p>
 <p>实验结果的第一层含义是任务收益。对推荐论文，应该看目标找到率、NDCG、CTR、覆盖率、放弃率、错误召回和长尾 query；对 LLM 论文，应该看 agent benchmark、幻觉检测、记忆更新、模型规模、推理成本和消融。LLMAnnotatedRetrieval 的摘要给出了足够明确的主结果，但仍需要把这些结果放回具体数据集和 baseline 中解释。</p>
 <p>第二层含义是机制证据。一个方法如果只在最终分数上领先，而没有说明中间信号如何变化，工程价值会下降。今天选择 LLMAnnotatedRetrieval，正是因为它提供了可追踪的中间变量：数据配方、记忆模块、梯度层级、属性澄清、LLM 标注、语义代理或课程难度。这些变量使得后续复现可以从小规模诊断开始。</p>
 <p>第三层含义是成本与风险。LLMAnnotatedRetrieval 的结果如果要迁移到生产系统，必须重新计算标注成本、教师调用成本、模型推理延迟、存储开销、用户交互轮次和监控复杂度。论文报告的提升很有价值，但这些提升是否抵消成本，需要具体业务口径。</p>
@@ -44,10 +46,12 @@ L = L_{task} + \lambda L_{align} + \mu L_{explain}
 <p>实验复现建议采用两步。第一步，固定作者提供的最小配置，复现一个小数据集或一个 benchmark 子集，确认趋势是否存在。第二步，换成自己的日志或任务，检查中间指标是否同向。若只有主指标提升而中间指标不稳定，说明方法可能依赖特定分布。</p>
 <p>对于推荐系统团队，LLMAnnotatedRetrieval 可以转化成离线诊断任务：把用户行为、候选生成、文本语义、LLM judge 或课程标签记录成可回放字段。对于大模型团队，它可以转化成可靠性监控任务：把 memory retrieval、gradient signal、teacher rationale 或 agent trajectory 变成可审计日志。这样即使短期不复现完整模型，也能吸收论文最有价值的系统思想。</p>
 <p>最后，实验结果还应和历史论文做对照。若它解决的是同一类数据稀疏、评估偏差或长上下文问题，就要比较它比先前方法多了什么观测变量；若它只是换了模型或数据集，则不应高估新意。LLMAnnotatedRetrieval 在今天候选池中胜出的原因，是它至少提供了一个新的诊断切口。</p>
+<p>补充实验判断：我会把这些结果视为“可跟踪证据”，而不是直接视为线上结论。后续若做复现，应先固定一个公开数据集或一个小规模任务，复现作者报告的方向性，再把相同诊断指标移植到本地日志。只有当主指标和中间诊断指标同时改善，才说明方法可能具备工程迁移价值。</p>
 <h2 id="4-总结">4. 总结</h2>
 <p>LLMAnnotatedRetrieval 的核心价值在于把 Sponsored Search / Dense Retrieval / LLM Annotation / Curriculum 相关问题从抽象趋势拆成可观察、可训练或可评估的系统环节。它不应被解读为已经解决所有推荐或大模型落地问题，而应被看作一套值得复用的诊断方法。</p>
 <p>我的判断是，这篇论文适合进入后续复现清单。第一，它的研究问题和推荐系统/大模型交叉方向高度相关；第二，它给出的机制不是单纯堆模型，而是围绕数据、状态、标注、记忆或评估口径展开；第三，它公开时间新，后续代码和社区复现可能继续补齐。</p>
 <p>局限至少有四点。第一，论文结果仍主要来自作者设置，尚未独立复现。第二，摘要页未给出独立代码页；涉及生产系统和线上 A/B，开源状态未核验。 第三，LLM 作为 teacher、judge 或 simulator 时可能引入 prompt 偏差和模型版本偏差。第四，生产系统中的延迟、隐私、缓存、库存和灰度约束没有完全体现在论文实验里。</p>
 <p>后续跟进建议有三条：先保存 arXiv 版本和摘要事实，等待代码或附录更新；再选择一个最小可复现实验，优先复现中间诊断指标而不是最高分；最后把论文提出的状态变量映射到本地日志，例如 query 属性、候选来源、记忆命中、梯度层级、judge rationale 或课程难度。</p>
 <p>如果只把 LLMAnnotatedRetrieval 当作一篇新论文读，价值会停留在摘要层；如果把它当作一套检查表读，它可以帮助我们改进推荐系统和 LLM 应用的评估方式。真正值得带走的是：模型能力提升必须和数据来源、状态更新、解释证据、成本边界一起报告。</p>
-<p>明天继续跟踪时，我会重点看它是否出现项目页更新、代码仓库、第三方复现或会议版本修订。只要这些材料补齐，就可以把今天的精读笔记升级为复现计划。</p></article></div></main><footer class="site-footer"><div class="page-shell"><span>© 2026 liuzhao09. learning machine.</span><a class="text-link" href="../papers.html">论文库</a></div></footer></body></html>
+<p>明天继续跟踪时，我会重点看它是否出现项目页更新、代码仓库、第三方复现或会议版本修订。只要这些材料补齐，就可以把今天的精读笔记升级为复现计划。</p>
+<p>后续归档时，这篇论文最好和同主题历史笔记建立交叉索引：若它解决的是评估问题，就和 LLM judge、离线指标、用户偏好代理放在一起；若它解决的是状态问题，就和 agent memory、长期兴趣、RAG 维护放在一起；若它解决的是训练信号问题，就和 LLM 标注、课程学习、教师蒸馏放在一起。这样可以减少重复阅读，也能更快发现真正新增的技术变量。</p></article></div></main><footer class="site-footer"><div class="page-shell"><span>© 2026 liuzhao09. learning machine.</span><a class="text-link" href="../papers.html">论文库</a></div></footer></body></html>
