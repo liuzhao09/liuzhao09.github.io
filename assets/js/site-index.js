@@ -12,6 +12,7 @@
     "./papers/mmrm-ecommerce-ranking.html": "2026-07-15",
     "./papers/stresa-multimodal-sequential-rec.html": "2026-07-15",
     "./papers/zorro-zero-weight-news-rec.html": "2026-07-15",
+    "./news/2026-07-17.html": "2026-07-17",
     "./news/2026-07-14.html": "2026-07-14",
     "./papers/workflow-as-knowledge.html": "2026-07-14",
     "./papers/citation-verifier-calibration.html": "2026-07-14",
