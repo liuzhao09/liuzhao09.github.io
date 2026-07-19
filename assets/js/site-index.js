@@ -1,5 +1,17 @@
 (() => {
   const noteDates = Object.freeze({
+    "./papers/longstraw-long-context-rl.html": "2026-07-20",
+    "./papers/prem-context-compression.html": "2026-07-20",
+    "./papers/seed-agentic-rl.html": "2026-07-20",
+    "./papers/long-history-ad-ranking.html": "2026-07-20",
+    "./papers/pinterest-causal-retrieval.html": "2026-07-20",
+    "./papers/pinterest-downstream-rewards.html": "2026-07-20",
+    "./papers/trace-turn-level-credit.html": "2026-07-17",
+    "./papers/agent-optimizers-compound.html": "2026-07-17",
+    "./papers/post-training-confidence-posconf.html": "2026-07-17",
+    "./papers/tmallgs-generative-search-ranking.html": "2026-07-17",
+    "./papers/apple-incremental-video-search.html": "2026-07-17",
+    "./papers/cluster-with-auctions-vector-search.html": "2026-07-17",
     "./papers/e3-complexity-aware-agents.html": "2026-07-16",
     "./papers/memops-lifecycle-memory.html": "2026-07-16",
     "./papers/function-aware-fim-midtraining.html": "2026-07-16",
