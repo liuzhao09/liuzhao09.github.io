@@ -55,7 +55,6 @@
     "./papers/mmrm-ecommerce-ranking.html": "2026-07-15",
     "./papers/stresa-multimodal-sequential-rec.html": "2026-07-15",
     "./papers/zorro-zero-weight-news-rec.html": "2026-07-15",
-    "./news/2026-08-04.html": "2026-08-04",
     "./news/2026-07-17.html": "2026-07-17",
     "./news/2026-07-14.html": "2026-07-14",
     "./papers/workflow-as-knowledge.html": "2026-07-14",
@@ -331,6 +330,7 @@
   });
 
   const newsDates = Object.freeze({
+    "./news/2026-08-04.html": "2026-08-04",
     "./news/2026-07-23.html": "2026-07-23",
     "./news/2026-07-22.html": "2026-07-22",
     "./news/2026-07-21.html": "2026-07-21",
