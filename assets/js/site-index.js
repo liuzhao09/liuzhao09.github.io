@@ -1,5 +1,6 @@
 (() => {
   const noteDates = Object.freeze({
+    "./papers/semantic-native-lsm.html": "2026-08-05",
     "./papers/livemem-state-continuity.html": "2026-08-05",
     "./papers/qwen-cua-native-computer-use.html": "2026-08-05",
     "./papers/longcat-sparse-attention.html": "2026-08-05",
@@ -168,7 +169,6 @@
     "./papers/onerank.html": "2026-06-17",
     "./papers/reaemb.html": "2026-06-17",
     "./papers/holorec.html": "2026-06-17",
-    "./papers/semantic-native-lsm.html": "2026-06-16",
     "./papers/akt-rec.html": "2026-06-16",
     "./papers/adasr.html": "2026-06-16",
     "./papers/agentspec.html": "2026-06-16",
@@ -528,15 +528,38 @@
   };
 
   const syncLibrary = () => {
+    const paperList = document.querySelector("#paper-list");
     const libraryPapers = [...document.querySelectorAll("#paper-list .library-paper")];
-    if (!libraryPapers.length) return;
+    if (!paperList || !libraryPapers.length) return;
 
     const count = libraryPapers.length;
     const latest = latestDate(libraryPapers);
     const searchInput = document.querySelector("#paper-search");
     const resultCount = document.querySelector("#result-count");
+    const noteOrder = new Map(Object.keys(noteDates).map((href, index) => [href, index]));
 
-    libraryPapers.forEach((paper) => ensureNoteDate(paper, dateForNode(paper)));
+    libraryPapers
+      .map((paper, originalIndex) => {
+        const link = paper.querySelector("a");
+        const href = normalizeHref(link?.getAttribute("href"));
+        return {
+          paper,
+          date: dateForNode(paper),
+          order: noteOrder.get(href) ?? Number.MAX_SAFE_INTEGER,
+          originalIndex,
+        };
+      })
+      .sort((left, right) =>
+        right.date.localeCompare(left.date) ||
+        left.order - right.order ||
+        left.originalIndex - right.originalIndex
+      )
+      .forEach(({ paper, date }, index) => {
+        ensureNoteDate(paper, date);
+        const indexNode = paper.querySelector(".library-index");
+        if (indexNode) indexNode.textContent = String(index + 1).padStart(2, "0");
+        paperList.append(paper);
+      });
 
     setText("#library-note-count", String(count));
     if (latest) setText("#library-latest", latest);
