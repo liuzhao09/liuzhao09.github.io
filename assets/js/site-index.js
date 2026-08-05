@@ -20,7 +20,7 @@
     "./papers/hilar-hierarchical-latent-reasoning-recommendation.html": "2026-08-03",
     "./papers/feedback-grounded-policy-generative-recommendation.html": "2026-08-03",
     "./papers/open-web-user-foundation-model.html": "2026-08-03",
-    "./papers/ccformer-tencent-industrial-recommendation.html": "2026-07-31",
+    "./papers/ccformer-tencent-industrial-recommendation.html": "2026-08-05",
     "./papers/rocs-request-oriented-compute-sharing.html": "2026-07-31",
     "./papers/ha-moe-heterogeneous-ranking-google-discover.html": "2026-07-31",
     "./papers/beta-opsd-policy-optimization-self-distillation.html": "2026-07-31",
