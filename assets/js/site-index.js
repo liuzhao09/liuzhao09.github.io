@@ -1,6 +1,11 @@
 (() => {
   const noteDates = Object.freeze({
-    "./news/2026-08-13.html": "2026-08-13",
+    "./papers/gallm-graph-aware-sequential-rec.html": "2026-08-14",
+    "./papers/hcgrec-hint-conditioned-generative-rec.html": "2026-08-14",
+    "./papers/prism-mixture-perspectives-sequential-rec.html": "2026-08-14",
+    "./papers/information-abundance-paradox.html": "2026-08-14",
+    "./papers/qv-pic-visual-rag-cache.html": "2026-08-14",
+    "./papers/agentic-memory-serving-cost.html": "2026-08-14",
     "./papers/test-time-self-evolving-gui.html": "2026-08-13",
     "./papers/misa-t-mixed-rollout-scheduling.html": "2026-08-13",
     "./papers/cross-lingual-agent-policy-retention.html": "2026-08-13",
@@ -379,6 +384,7 @@
   });
 
   const newsDates = Object.freeze({
+    "./news/2026-08-13.html": "2026-08-13",
     "./news/2026-08-12.html": "2026-08-12",
     "./news/2026-08-11.html": "2026-08-11",
     "./news/2026-08-10.html": "2026-08-10",
