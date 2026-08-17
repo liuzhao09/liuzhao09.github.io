@@ -1,5 +1,11 @@
 (() => {
   const noteDates = Object.freeze({
+    "./papers/envs-forge-agent-rl.html": "2026-08-18",
+    "./papers/simpleopd-on-policy-distillation.html": "2026-08-18",
+    "./papers/agentrewind-recoverable-execution.html": "2026-08-18",
+    "./papers/echorec-cycle-consistent-generative-rec.html": "2026-08-18",
+    "./papers/adsworldengine-conversational-ad-agent.html": "2026-08-18",
+    "./papers/residual-dominance-sequential-rec.html": "2026-08-18",
     "./papers/ripplemem-associative-recollection.html": "2026-08-17",
     "./papers/vtoken-reclaimable-kv-cache.html": "2026-08-17",
     "./papers/opscale-operator-autoscaling.html": "2026-08-17",
