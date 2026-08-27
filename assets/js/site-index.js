@@ -1,5 +1,11 @@
 (() => {
   const noteDates = Object.freeze({
+    "./papers/asymspec-context-asymmetric-decoding.html": "2026-08-28",
+    "./papers/progrouter-progress-guided-orchestration.html": "2026-08-28",
+    "./papers/dualopsd-adaptive-privileged-teachers.html": "2026-08-28",
+    "./papers/amber-event-tokenization.html": "2026-08-28",
+    "./papers/transretrieval-industrial-recommendation.html": "2026-08-28",
+    "./papers/dceo-long-term-user-value.html": "2026-08-28",
     "./papers/cairo-context-aware-item-profiling.html": "2026-08-26",
     "./papers/recuris-experiential-working-memory.html": "2026-08-27",
     "./papers/spo-plus-stream-aligned-agentic-rl.html": "2026-08-27",
@@ -7,6 +13,7 @@
     "./papers/unispecrec-spectral-decoupling.html": "2026-08-27",
     "./papers/native-multimodal-ctr.html": "2026-08-27",
     "./papers/tagr-temporal-generative-ads.html": "2026-08-27",
+    "./papers/memrerank.html": "2026-08-26",
     "./papers/bpco-stable-efficient-critic.html": "2026-08-26",
     "./papers/prime-agent-rlm-harness.html": "2026-08-26",
     "./papers/prefix-invariance-sequence-audit.html": "2026-08-26",
