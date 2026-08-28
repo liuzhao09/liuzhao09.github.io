@@ -6,6 +6,7 @@
     "./papers/amber-event-tokenization.html": "2026-08-28",
     "./papers/transretrieval-industrial-recommendation.html": "2026-08-28",
     "./papers/dceo-long-term-user-value.html": "2026-08-28",
+    "./news/2026-08-28.html": "2026-08-28",
     "./papers/cairo-context-aware-item-profiling.html": "2026-08-26",
     "./papers/recuris-experiential-working-memory.html": "2026-08-27",
     "./papers/spo-plus-stream-aligned-agentic-rl.html": "2026-08-27",
