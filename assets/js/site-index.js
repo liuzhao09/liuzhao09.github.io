@@ -9,7 +9,7 @@
     "./papers/asymspec-context-asymmetric-decoding.html": "2026-08-28",
     "./papers/progrouter-progress-guided-orchestration.html": "2026-08-28",
     "./papers/dualopsd-adaptive-privileged-teachers.html": "2026-08-28",
-    "./papers/amber-event-tokenization.html": "2026-08-28",
+    "./papers/amber-event-tokenization.html": "2026-08-27",
     "./papers/transretrieval-industrial-recommendation.html": "2026-08-28",
     "./papers/dceo-long-term-user-value.html": "2026-08-28",
     "./news/2026-08-31.html": "2026-08-31",
