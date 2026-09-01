@@ -18,6 +18,7 @@
     "./papers/amber-event-tokenization.html": "2026-08-27",
     "./papers/transretrieval-industrial-recommendation.html": "2026-08-28",
     "./papers/dceo-long-term-user-value.html": "2026-08-28",
+    "./news/2026-09-01.html": "2026-09-01",
     "./news/2026-08-31.html": "2026-08-31",
     "./news/2026-08-28.html": "2026-08-28",
     "./papers/cairo-context-aware-item-profiling.html": "2026-08-26",
