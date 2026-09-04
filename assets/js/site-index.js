@@ -37,6 +37,7 @@
     "./papers/amber-event-tokenization.html": "2026-08-27",
     "./papers/transretrieval-industrial-recommendation.html": "2026-08-28",
     "./papers/dceo-long-term-user-value.html": "2026-08-28",
+    "./news/2026-09-04.html": "2026-09-04",
     "./news/2026-09-03.html": "2026-09-03",
     "./news/2026-09-02.html": "2026-09-02",
     "./news/2026-09-01.html": "2026-09-01",
