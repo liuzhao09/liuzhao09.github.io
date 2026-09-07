@@ -1,5 +1,12 @@
 (() => {
   const noteDates = Object.freeze({
+    "./papers/cua-universe.html": "2026-09-07",
+    "./papers/agent-memory-portability.html": "2026-09-07",
+    "./papers/rise-self-extrapolating-distillation.html": "2026-09-07",
+    "./papers/sam-d2q.html": "2026-09-07",
+    "./papers/atomrec.html": "2026-09-07",
+    "./papers/ptdg-task-dependency.html": "2026-09-07",
+
     "./papers/coral-recommender.html": "2026-09-04",
     "./papers/dmrl-ad-recommendation.html": "2026-09-04",
     "./papers/spar-generative-poi.html": "2026-09-04",
@@ -699,8 +706,11 @@
     });
 
     const count = recentItems.length;
-    const paperCount = count || Object.keys(noteDates).length;
-    const latest = latestDate(recentItems) || Object.values(noteDates).sort().at(-1) || "";
+    const paperDates = Object.entries(noteDates)
+      .filter(([href]) => href.startsWith("./papers/"))
+      .map(([, date]) => date);
+    const paperCount = paperDates.length;
+    const latest = paperDates.sort().at(-1) || "";
     const newsCount = Object.keys(newsDates).length;
     const newsLatest = Object.values(newsDates).sort().at(-1) || "";
     const marketCount = Object.keys(marketDates).length;
