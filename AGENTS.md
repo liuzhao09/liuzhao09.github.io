@@ -12,15 +12,14 @@ Use `AGENTS.md` as the canonical agent guidance file. Do not rename this to
 
 ## File Change Recording
 
-Before changing any file contents, call:
+Keep file changes auditable without making an optional recording service a task dependency. `beforeEditFile` and `afterEditFile` are external MCP hooks, not built-in Codex or Git functions. Check the callable tool inventory once per run.
 
-`beforeEditFile({ file_path: "/absolute/path/to/file" })`
-
-After the change is complete, call:
-
-`afterEditFile({ file_path: "/absolute/path/to/file" })`
-
-Use absolute paths and keep one before/after pair per changed file.
+- When the real hooks are available, call `beforeEditFile({ file_path: "/absolute/path/to/file" })` before each file change and `afterEditFile` immediately afterwards. Use absolute paths and one matched pair per file; do not record read-only operations.
+- If either hook is missing or fails, automatically use the calling automation repository's `scripts/file_change_audit.py` (see its `scripts/FILE_CHANGE_RECORDING.md`) to record per-file before/after existence, byte size, SHA-256 and time. The helper accepts this repository as `--repo`; logs stay in Git's private directory. This is local audit, not a successful external hook call.
+- If that helper is unavailable, preserve the starting Git status and target-file diff/hash, then inspect each changed file's final diff/hash. Mark this as Git audit fallback and disclose missing evidence. Continue authorized generation, validation and publishing; do not block or repeatedly request approval solely because an optional recorder is unavailable.
+- Record create/delete/binary outputs too; record a move as the old and new paths separately. Close failed operations with their failure status. Recover missed records from known Git baselines and current hashes, explicitly marking missing pre-edit evidence rather than fabricating it. Unchanged content is not counted as a change.
+- Parallel workers must own disjoint files and separate audit transactions. Keep logs, temporary diffs, absolute local paths and tool state in Git's private directory or a verified gitignored directory; never publish them. Recorder log writes are exempt from recursive recording.
+- Capture existing dirty changes before work. Preserve them and stage only explicit files belonging to the current task; do not use broad `git add .` when unrelated changes exist.
 
 ## Site Structure
 
