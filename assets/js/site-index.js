@@ -1,5 +1,6 @@
 (() => {
   const noteDates = Object.freeze({
+    "./news/2026-10-01.html": "2026-10-01",
     "./papers/stepquant.html": "2026-10-01",
     "./papers/leapquant.html": "2026-10-01",
     "./papers/dr-opd.html": "2026-10-01",
