@@ -762,7 +762,7 @@
   });
 
   const housingDates = Object.freeze({
-    "./housing/2026-10-05.html": "2026-10-05",
+    "./housing/2026-10-06.html": "2026-10-06",
     "./housing/2026-09-25.html": "2026-09-25",
     "./housing/2026-09-18.html": "2026-09-18",
     "./housing/2026-09-11.html": "2026-09-11",
