@@ -71,6 +71,7 @@
     "./papers/recrsi-mechanism-discovery.html": "2026-11-04",
     "./papers/e-genrm-shopping-reward.html": "2026-11-04",
 
+    "./news/2026-11-23.html": "2026-11-23",
     "./news/2026-11-20.html": "2026-11-20",
     "./news/2026-11-19.html": "2026-11-19",
     "./news/2026-11-09.html": "2026-11-09",
