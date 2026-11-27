@@ -947,6 +947,7 @@
   });
 
   const marketDates = Object.freeze({
+    "./market/2026-11-27.html": "2026-11-27",
     "./market/2026-11-26.html": "2026-11-26",
     "./market/2026-11-25.html": "2026-11-25",
     "./market/2026-11-24.html": "2026-11-24",
